@@ -104,7 +104,18 @@ int main()
 
     double* M = static_cast<double*>(malloc(n_cols * n_rows * sizeof(double)));
 
-    sequential_spai(A, M, n_rows);
+    //sequential_spai(A, M, n_rows);
+
+    int* csc_col_ptr_A, *csc_row_ind_A;
+    double* csc_val_A;
+    Utils::read_matrix_market_file_col_major_sparse("../sherman1.mtx", n_rows, n_cols, csc_col_ptr_A,
+        csc_val_A, csc_row_ind_A);
+
+
+    for (int i = 0; i < n_cols + 1; i++)
+    {
+        printf("%d\n", csc_col_ptr_A[i]);
+    }
 
     free(M);
     free(A);
