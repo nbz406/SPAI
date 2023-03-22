@@ -58,7 +58,7 @@ void Utils::read_matrix_market_file_col_major_sparse(const char* file_name, int&
 
 	// Construct shape array: number of non-zeros in columns:
 	int prev_col = 1;
-	int col_nnz = 0;
+	int total_nnz = 0;
 	csc_col_ptr_A[0] = 0;
 	for (int l = 0; l < num_lines; l++)
 	{
@@ -71,11 +71,11 @@ void Utils::read_matrix_market_file_col_major_sparse(const char* file_name, int&
 
 		while (col - prev_col > 0)
 		{
-			csc_col_ptr_A[prev_col] = col_nnz;
+			csc_col_ptr_A[prev_col] = total_nnz;
 			prev_col++;
 		}
-		col_nnz++;
+		total_nnz++;
 		prev_col = col;
 	}
-	csc_col_ptr_A[prev_col] = col_nnz;
+	csc_col_ptr_A[prev_col] = total_nnz;
 }

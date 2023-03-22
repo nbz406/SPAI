@@ -112,11 +112,7 @@ int main()
         csc_val_A, csc_row_ind_A);
 
 
-    for (int i = 0; i < n_cols + 1; i++)
-    {
-        printf("%d\n", csc_col_ptr_A[i]);
-    }
-
+    free(csc_col_ptr_A); free(csc_val_A); free(csc_row_ind_A);
     free(M);
     free(A);
     return 0;
