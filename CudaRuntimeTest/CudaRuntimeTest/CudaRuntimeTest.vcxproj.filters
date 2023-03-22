@@ -1,0 +1,19 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <CudaCompile Include="kernel.cu" />
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="Resource Files">
+      <UniqueIdentifier>{b7a0d4a3-5633-4257-88cb-3091071e6804}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="..\orsirr_1.mtx">
+      <Filter>Resource Files</Filter>
+    </None>
+    <None Include="..\sherman1.mtx">
+      <Filter>Resource Files</Filter>
+    </None>
+  </ItemGroup>
+</Project>
