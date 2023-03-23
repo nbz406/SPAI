@@ -9,6 +9,8 @@
 #include <vector>
 #include <chrono>
 #include <cublas_v2.h>
+#include <cusparse_v2.h>
+#include <cublasLt.h>
 
 #include "Utils.h"
 
@@ -88,13 +90,16 @@ int main()
         return 1;
     }
 
-    double* A;
-    int n_rows, n_cols;
-    const char* file_name = "../sherman1.mtx";
+
+    int n_rows, n_cols, nnz;
+    int *csc_col_ptr_A, *csc_row_ind_A, *csc_col_ptr_M, *csc_row_ind_M;
+    double* csc_val_A, *csc_val_M;
 
     try
     {
-        A = Utils::read_matrix_market_file_col_major("../sherman1.mtx", n_rows, n_cols);
+        const char* file_name = "../sherman1.mtx";
+        Utils::read_matrix_market_file_col_major_sparse(file_name, n_rows, n_cols, nnz, csc_col_ptr_A,
+            csc_val_A, csc_row_ind_A);
         printf("%s, %d x %d matrix loaded.\n", file_name, n_rows, n_cols);
     }
     catch (const std::exception&)
@@ -102,19 +107,27 @@ int main()
         return EXIT_FAILURE;
     }
 
-    double* M = static_cast<double*>(malloc(n_cols * n_rows * sizeof(double)));
+    Utils::create_identity_csc(n_rows, csc_col_ptr_M, csc_val_M, csc_row_ind_M);
 
-    //sequential_spai(A, M, n_rows);
+    for (int k = 0; k < n_cols; k++)
+    {
+        int beg = csc_col_ptr_M[k]; // points to start of sub-array with column k
+        int end = csc_col_ptr_M[k + 1] - 1; // points to end of sub-array with column k
 
-    int* csc_col_ptr_A, *csc_row_ind_A;
-    double* csc_val_A;
-    Utils::read_matrix_market_file_col_major_sparse("../sherman1.mtx", n_rows, n_cols, csc_col_ptr_A,
-        csc_val_A, csc_row_ind_A);
+        int n2 = end - beg + 1;
+        int* J = (int*)(malloc(sizeof(int) * (n2)));
+        
+        for (int i = 0; i < n2; i++)
+        {
+            J[i] = csc_row_ind_M[i];
+        }
+
+
+    }
 
 
     free(csc_col_ptr_A); free(csc_val_A); free(csc_row_ind_A);
-    free(M);
-    free(A);
+    free(csc_col_ptr_M); free(csc_val_M); free(csc_row_ind_M);
     return 0;
 }
 
