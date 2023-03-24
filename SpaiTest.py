@@ -49,6 +49,8 @@ for k in range(0, M.shape[1]):
     J = m_k.nonzero()[0] # gets row inds of nonzero
     n2 = J.size
 
+    print(J)
+
     # Calculate A(.,J)
     A_J = A[:,J]
 

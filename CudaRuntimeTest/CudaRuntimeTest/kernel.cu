@@ -112,17 +112,20 @@ int main()
     for (int k = 0; k < n_cols; k++)
     {
         int beg = csc_col_ptr_M[k]; // points to start of sub-array with column k
-        int end = csc_col_ptr_M[k + 1] - 1; // points to end of sub-array with column k
+        int end = csc_col_ptr_M[k + 1]; // points to end of sub-array with column k
 
-        int n2 = end - beg + 1;
+        // Get all row inds from beg to end:
+        int n2 = end - beg;
         int* J = (int*)(malloc(sizeof(int) * (n2)));
         
         for (int i = 0; i < n2; i++)
         {
-            J[i] = csc_row_ind_M[i];
+            J[i] = csc_row_ind_M[i + beg];
+            printf("J_%d[%d] = %d\n", k, i, J[i]);
         }
 
-
+        // Free all mallocs
+        free(J);
     }
 
 
