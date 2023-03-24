@@ -26,72 +26,31 @@ __global__ void addKernel(int *c, const int *a, const int *b)
     c[i] = a[i] + b[i];
 }
 
-void sequential_spai(double* A, double* M, const int N)
-{
-    double* e_k = static_cast<double*>(malloc(N * N * sizeof(double)));
-
-    // Populate M with ones in diagonal. Column major, so outer loop is over columns. Also populates e_k.
-    for (int j = 0; j < N; j++)
-    {
-        for (int i = 0; i < N; i++)
-        {
-            if (i == j) {
-                M[IDX2C(i, j, N)] = 1;
-				e_k[IDX2C(i, j, N)] = 1;
-			}
-            else
-            {
-                M[IDX2C(i, j, N)] = 0;
-                e_k[IDX2C(i, j, N)] = 0;
-            }
-        }
-    }
-    int nnz = 0;
-    // for each column
-    for (int k = 0; k < N; k++)
-    {
-        int iteration = 0;
-        // each column is M from IDX2C(0, k, N) to IDX2C(0, k, N-1);
-        // e_k[IDX2C(1 to N-1, k, N)]
-        
-        // Calculate J, an array of nonzero row indices of M
-        std::vector<int> J;
-        for (int i = 0; i < N; i++)
-        {
-            if (!iszero(M[IDX2C(i,k,N)]))
-                J.emplace_back(i);
-        }
-        // Column major CSR can get indices from offsets array.
-
-    }
-}
+	//const int arraySize = 5;
+    //const int a[arraySize] = { 1, 2, 3, 4, 5 };
+    //const int b[arraySize] = { 10, 20, 30, 40, 50 };
+    //int c[arraySize] = { 0 };
+    //
+    //// Add vectors in parallel.
+    //cudaError_t cudaStatus = addWithCuda(c, a, b, arraySize);
+    //if (cudaStatus != cudaSuccess) {
+    //    fprintf(stderr, "addWithCuda failed!");
+    //    return 1;
+    //}
+    //
+    //printf("{1,2,3,4,5} + {10,20,30,40,50} = {%d,%d,%d,%d,%d}\n",
+    //    c[0], c[1], c[2], c[3], c[4]);
+    //
+    //// cudaDeviceReset must be called before exiting in order for profiling and
+    //// tracing tools such as Nsight and Visual Profiler to show complete traces.
+    //cudaStatus = cudaDeviceReset();
+    //if (cudaStatus != cudaSuccess) {
+    //    fprintf(stderr, "cudaDeviceReset failed!");
+    //    return 1;
+    //}
 
 int main()
 {
-    const int arraySize = 5;
-    const int a[arraySize] = { 1, 2, 3, 4, 5 };
-    const int b[arraySize] = { 10, 20, 30, 40, 50 };
-    int c[arraySize] = { 0 };
-
-    // Add vectors in parallel.
-    cudaError_t cudaStatus = addWithCuda(c, a, b, arraySize);
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "addWithCuda failed!");
-        return 1;
-    }
-
-    printf("{1,2,3,4,5} + {10,20,30,40,50} = {%d,%d,%d,%d,%d}\n",
-        c[0], c[1], c[2], c[3], c[4]);
-
-    // cudaDeviceReset must be called before exiting in order for profiling and
-    // tracing tools such as Nsight and Visual Profiler to show complete traces.
-    cudaStatus = cudaDeviceReset();
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaDeviceReset failed!");
-        return 1;
-    }
-
-
     int n_rows, n_cols, nnz;
     int *csc_col_ptr_A, *csc_row_ind_A, *csc_col_ptr_M, *csc_row_ind_M;
     double* csc_val_A, *csc_val_M;
@@ -164,15 +123,8 @@ int main()
                 A_hat[IDX2C(i, j, n1)] = csc_val_A[col_start + index];
 	        }
         }
-        for (int i = 0; i < n1; i++)
-        {
-            for (int j = 0; j < n2; j++)
-	        {
-                printf(" %e ", A_hat[IDX2C(i, j, n1)]);
-	        }
-            printf("\n");
-        }
-        printf("\n");
+
+
 
         // Free all allocations
         free(A_hat);
@@ -185,6 +137,43 @@ int main()
     free(csc_col_ptr_M); free(csc_val_M); free(csc_row_ind_M);
     return 0;
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 // Helper function for using CUDA to add vectors in parallel.
 cudaError_t addWithCuda(int *c, const int *a, const int *b, unsigned int size)

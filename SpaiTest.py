@@ -9,19 +9,19 @@ import random
 import heapq
 import functools
 
-N = 50
-n_most_profitable_indices = 5
-epsilon = 0.01
-maxiter = 100
+from io import StringIO
+from scipy.io import mmread
 
-# A is a csr format of the matrix that we wish to invert
-A = scipy.sparse.random(N, N, density=0.1, format='csr', random_state=1)
-AInv = scipy.sparse.linalg.inv(A)
+N = 1000
+n_most_profitable_indices = 5
+epsilon = 0.1
+maxiter = 10
 
 # M is just a sparse identity matrix
 M = scipy.sparse.identity(N, format='csr')
-print(np.linalg.norm(A * M - np.identity(M.shape[1])))
-
+# A is a csr format of the matrix that we wish to invert
+A = scipy.sparse.csr_matrix(mmread("CudaRuntimeTest\sherman1.mtx"))
+AInv = scipy.sparse.linalg.inv(A)
 
 def permutation(set, n, settilde, ntilde, mode="col"):
     setsettilde = list(zip(list(np.arange(0,n + ntilde)),list(set) + list(settilde)))
@@ -60,6 +60,8 @@ for k in range(0, M.shape[1]):
 
     # Reduced matrix A_IJ (A hat) an n1 x n2 matrix
     A_IJ = A[np.ix_(I, J)]
+
+    print("AIJ: \n", A_IJ)
 
     # Compute ehat_k
     ehat_k = e_k[I]
