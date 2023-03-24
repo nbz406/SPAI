@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <cstdio>
 #include <vector>
+#include <algorithm>
 #include <chrono>
 #include <cublas_v2.h>
 #include <cusparse_v2.h>
@@ -144,9 +145,37 @@ int main()
             }
         }
 
-
+        // Construct dense A[I,J] in column major format to be used in batched QR decomposition.
+        double* A_hat = static_cast<double*>(malloc(sizeof(double) * n1 * n2));
+        for (int j = 0; j < n2; j++)
+        {
+            const int col_ind = J[j];
+            const int col_start = csc_col_ptr_A[col_ind];
+            const int col_end = csc_col_ptr_A[col_ind + 1];
+            int* beg = &csc_row_ind_A[col_start];
+            int* end = &csc_row_ind_A[col_end];
+	        for (int i = 0; i < n1; i++)
+	        {
+                const int row_ind = I[i];
+                // Need to search for row ind I[i] in csc_row_ind_A: idx and return the val at this idx.
+                // Indices in csc_row_ind_A are sorted per column, so binary search works
+                int* itr = std::lower_bound(beg, end, row_ind);
+                const int index = std::distance(beg, itr);
+                A_hat[IDX2C(i, j, n1)] = csc_val_A[col_start + index];
+	        }
+        }
+        for (int i = 0; i < n1; i++)
+        {
+            for (int j = 0; j < n2; j++)
+	        {
+                printf(" %e ", A_hat[IDX2C(i, j, n1)]);
+	        }
+            printf("\n");
+        }
+        printf("\n");
 
         // Free all allocations
+        free(A_hat);
         free(I);
         free(J);
     }
