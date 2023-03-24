@@ -14,7 +14,7 @@ from scipy.io import mmread
 
 N = 1000
 n_most_profitable_indices = 5
-epsilon = 0.1
+epsilon = 0.5
 maxiter = 10
 
 # M is just a sparse identity matrix

@@ -6,17 +6,40 @@
 
 #include <stdio.h>
 #include <cstdio>
-#include <vector>
-#include <algorithm>
-#include <chrono>
-#include <cublas_v2.h>
-#include <cusparse_v2.h>
-#include <cublasLt.h>
+#include "cublas_v2.h"
 
 #include "Utils.h"
 
 #define IDX2C(i,j,ld) (((j)*(ld))+(i))
 #define iszero(val) (abs(val) < 0.00000001)
+
+#define cudacall(call)                                                                                                          \
+    do                                                                                                                          \
+    {                                                                                                                           \
+        cudaError_t err = (call);                                                                                               \
+        if(cudaSuccess != err)                                                                                                  \
+        {                                                                                                                       \
+            fprintf(stderr,"CUDA Error:\nFile = %s\nLine = %d\nReason = %s\n", __FILE__, __LINE__, cudaGetErrorString(err));    \
+            cudaDeviceReset();                                                                                                  \
+            exit(EXIT_FAILURE);                                                                                                 \
+        }                                                                                                                       \
+    }                                                                                                                           \
+    while (0)
+
+#define cublascall(call)                                                                                        \
+    do                                                                                                          \
+    {                                                                                                           \
+        cublasStatus_t status = (call);                                                                         \
+        if(CUBLAS_STATUS_SUCCESS != status)                                                                     \
+        {                                                                                                       \
+            fprintf(stderr,"CUBLAS Error:\nFile = %s\nLine = %d\nCode = %d\n", __FILE__, __LINE__, status);     \
+            cudaDeviceReset();                                                                                  \
+            exit(EXIT_FAILURE);                                                                                 \
+        }                                                                                                       \
+                                                                                                                \
+    }                                                                                                           \
+    while(0)
+
 
 cudaError_t addWithCuda(int *c, const int *a, const int *b, unsigned int size);
 
@@ -51,6 +74,9 @@ __global__ void addKernel(int *c, const int *a, const int *b)
 
 int main()
 {
+    cublasHandle_t handle;
+    cublascall(cublasCreate(&handle));
+
     int n_rows, n_cols, nnz;
     int *csc_col_ptr_A, *csc_row_ind_A, *csc_col_ptr_M, *csc_row_ind_M;
     double* csc_val_A, *csc_val_M;
@@ -91,50 +117,40 @@ int main()
             n1 += csc_col_ptr_A[col_ind + 1] - csc_col_ptr_A[col_ind];
         }
 
-        // get indices from csc_row_ind_A starting from the column pointers from csc_col_ptr_A[J]
-        int* I = static_cast<int*>(malloc(sizeof(int) * n1));
-        int i_ind = 0;
-        for (int j = 0; j < n2; j++)
-        {
-            const int col_ind = J[j];
-            for (int i = csc_col_ptr_A[col_ind]; i < csc_col_ptr_A[col_ind + 1]; i++)
-            {
-                I[i_ind] = csc_row_ind_A[i];
-                i_ind++;
-            }
-        }
-
+        // Get indices from csc_row_ind_A starting from the column pointers from csc_col_ptr_A[J]
         // Construct dense A[I,J] in column major format to be used in batched QR decomposition.
+        int* I = static_cast<int*>(malloc(sizeof(int) * n1));
         double* A_hat = static_cast<double*>(malloc(sizeof(double) * n1 * n2));
+        int i_ind = 0;
         for (int j = 0; j < n2; j++)
         {
             const int col_ind = J[j];
             const int col_start = csc_col_ptr_A[col_ind];
             const int col_end = csc_col_ptr_A[col_ind + 1];
-            int* beg = &csc_row_ind_A[col_start];
-            int* end = &csc_row_ind_A[col_end];
-	        for (int i = 0; i < n1; i++)
-	        {
-                const int row_ind = I[i];
-                // Need to search for row ind I[i] in csc_row_ind_A: idx and return the val at this idx.
-                // Indices in csc_row_ind_A are sorted per column, so binary search works
-                int* itr = std::lower_bound(beg, end, row_ind);
-                const int index = std::distance(beg, itr);
-                A_hat[IDX2C(i, j, n1)] = csc_val_A[col_start + index];
-	        }
+            for (int i = col_start; i < col_end; i++)
+            {
+                I[i_ind] = csc_row_ind_A[i];
+                A_hat[IDX2C(i_ind, j, n1)] = csc_val_A[i];
+                i_ind++;
+            }
         }
 
-
+        // Compute QR decomposition of A_hat
+        double* devA_hat;
+        cudacall(cudaMalloc((void**)&devA_hat, n1 * n2 * sizeof(*devA_hat)));
+        cudacall(cudaMemcpy(devA_hat, A_hat, n1 * n2 * sizeof(devA_hat), cudaMemcpyHostToDevice));
 
         // Free all allocations
         free(A_hat);
         free(I);
         free(J);
+        cudacall(cudaFree(devA_hat));
     }
 
 
     free(csc_col_ptr_A); free(csc_val_A); free(csc_row_ind_A);
     free(csc_col_ptr_M); free(csc_val_M); free(csc_row_ind_M);
+    cublasDestroy_v2(handle);
     return 0;
 }
 
