@@ -81,9 +81,9 @@ void Utils::read_matrix_market_file_col_major_sparse(const char* file_name, int&
 
 void Utils::create_identity_csc(int N, int*& csc_col_ptr_I, double*& csc_val_I, int*& csc_row_ind_I)
 {
-	csc_val_I = (double*)(malloc(sizeof(double) * N));
-	csc_col_ptr_I = (int*)(malloc(sizeof(int) * (N + 1)));
-	csc_row_ind_I = (int*)(malloc(sizeof(int) * N));
+	csc_val_I = static_cast<double*>(malloc(sizeof(double) * N));
+	csc_col_ptr_I = static_cast<int*>(malloc(sizeof(int) * (N + 1)));
+	csc_row_ind_I = static_cast<int*>(malloc(sizeof(int) * N));
 	
 	for (int i = 0; i < N; i++)
 	{

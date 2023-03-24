@@ -111,20 +111,43 @@ int main()
 
     for (int k = 0; k < n_cols; k++)
     {
-        int beg = csc_col_ptr_M[k]; // points to start of sub-array with column k
-        int end = csc_col_ptr_M[k + 1]; // points to end of sub-array with column k
+	    const int beg = csc_col_ptr_M[k]; // points to start of sub-array with column k
+	    const int end = csc_col_ptr_M[k + 1]; // points to end of sub-array with column k
 
-        // Get all row inds from beg to end:
+        // Construct J by getting all row indices from beg to end 
         int n2 = end - beg;
-        int* J = (int*)(malloc(sizeof(int) * (n2)));
-        
-        for (int i = 0; i < n2; i++)
+        int* J = static_cast<int*>(malloc(sizeof(int) * n2));
+        for (int j = 0; j < n2; j++)
         {
-            J[i] = csc_row_ind_M[i + beg];
-            printf("J_%d[%d] = %d\n", k, i, J[i]);
+            J[j] = csc_row_ind_M[j + beg];
         }
 
-        // Free all mallocs
+        // Construct I: nonzero rows of A[:,J]
+        // We have to allocate n2 = reduce (+) (map (\j -> shape_A[j]) J) = reduce (+) (map (\j -> csc_col_ptr_A[j+1]-csc_col_ptr_A[j]) J)
+        int n1 = 0;
+    	for (int j = 0; j < n2; j++)
+        {
+            const int col_ind = J[j];
+            n1 += csc_col_ptr_A[col_ind + 1] - csc_col_ptr_A[col_ind];
+        }
+
+        // get indices from csc_row_ind_A starting from the column pointers from csc_col_ptr_A[J]
+        int* I = static_cast<int*>(malloc(sizeof(int) * n1));
+        int i_ind = 0;
+        for (int j = 0; j < n2; j++)
+        {
+            const int col_ind = J[j];
+            for (int i = csc_col_ptr_A[col_ind]; i < csc_col_ptr_A[col_ind + 1]; i++)
+            {
+                I[i_ind] = csc_row_ind_A[i];
+                i_ind++;
+            }
+        }
+
+
+
+        // Free all allocations
+        free(I);
         free(J);
     }
 
