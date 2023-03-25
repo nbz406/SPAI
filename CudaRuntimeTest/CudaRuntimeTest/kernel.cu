@@ -117,6 +117,8 @@ int main()
             n1 += csc_col_ptr_A[col_ind + 1] - csc_col_ptr_A[col_ind];
         }
 
+        // Maybe find max dimensions between columns to make QR batched work
+
         // Get indices from csc_row_ind_A starting from the column pointers from csc_col_ptr_A[J]
         // Construct dense A[I,J] in column major format to be used in batched QR decomposition.
         int* I = static_cast<int*>(malloc(sizeof(int) * n1));
@@ -135,16 +137,41 @@ int main()
             }
         }
 
-        // Compute QR decomposition of A_hat
-        double* devA_hat;
-        cudacall(cudaMalloc((void**)&devA_hat, n1 * n2 * sizeof(*devA_hat)));
-        cudacall(cudaMemcpy(devA_hat, A_hat, n1 * n2 * sizeof(devA_hat), cudaMemcpyHostToDevice));
+        const int batchsize = 1;
+        const int ltau = std::max(1, std::min(n1, n2));
+
+        double* dA_hat;     cudacall(cudaMalloc((void**)&dA_hat, batchsize * n1 * n2 * sizeof(*dA_hat)));
+        cudacall(cudaMemcpy(dA_hat, A_hat, n1 * n2 * sizeof(dA_hat), cudaMemcpyHostToDevice));
+
+        double* d_TAU;      cudacall(cudaMalloc((void**)&d_TAU, batchsize * ltau * sizeof(double)));
+
+        double* h_A_hatArray[batchsize], * h_TauArray[batchsize];
+
+        for (int i = 0; i < batchsize; i++)
+        {
+            h_A_hatArray[i] = dA_hat + i * n1 * n2;
+            h_TauArray[i] = d_TAU + i * ltau;
+        }
+
+        double** d_Aarray, ** d_TauArray;
+        cudaMalloc((void**)&d_Aarray, sizeof(h_A_hatArray));
+        cudaMalloc((void**)&d_TauArray, sizeof(h_TauArray));
+
+        cudaMemcpy(d_Aarray, h_A_hatArray, sizeof(h_A_hatArray), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_TauArray, h_TauArray, sizeof(h_TauArray), cudaMemcpyHostToDevice);
+        int info;
+        cublascall(cublasDgeqrfBatched(handle, n1, n2, d_Aarray, n1, d_TauArray, &info, batchsize));
+
+        cudacall(cudaMemcpy(A_hat, dA_hat, batchsize * n1 * n2 * sizeof(double), cudaMemcpyDeviceToHost));
 
         // Free all allocations
         free(A_hat);
         free(I);
         free(J);
-        cudacall(cudaFree(devA_hat));
+        cudacall(cudaFree(dA_hat));
+        cudacall(cudaFree(d_TAU));
+        cudacall(cudaFree(d_Aarray));
+        cudacall(cudaFree(d_TauArray));
     }
 
 

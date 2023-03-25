@@ -59,16 +59,23 @@ for k in range(0, M.shape[1]):
     n1 = I.size
 
     # Reduced matrix A_IJ (A hat) an n1 x n2 matrix
-    A_IJ = A[np.ix_(I, J)]
-
-    print("AIJ: \n", A_IJ)
+    A_IJ = A[np.ix_(I, J)].todense()
 
     # Compute ehat_k
     ehat_k = e_k[I]
 
+    A_IJ = np.hstack((np.vstack((A_IJ, np.zeros((n1,n2)))),np.vstack((np.zeros((n1,n2)), np.zeros((n1,n2))))))
+
+    print(A_IJ)
+
     # Compute QR decomp. R_1 upper triangular n1 x n1 matrix. 0 is an (n1 − n2)×n2 zero matrix. Q1 is m×n, Q2 is m×(m − n)
-    Q, R = np.linalg.qr(A_IJ.todense(), mode="complete")
-    R_1 = R[0:n2,:]
+    Q, R = np.linalg.qr(A_IJ, mode="complete")
+    R_1 = R[:n2,:n2]
+
+    Q = Q[:n1,:n1]
+
+    print("Q: ",Q)
+    print("R: ",R_1)
 
     # Compute mhat_k
     chat_k = Q.T * ehat_k

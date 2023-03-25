@@ -5,7 +5,7 @@
 #include <iostream>
 
 
-static class Utils
+class Utils
 {
 public:
 	static double* read_matrix_market_file_col_major(const char* file_name, int& n_rows, int& n_cols);
