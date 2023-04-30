@@ -15,6 +15,23 @@ from scipy.io import mmread
 
 from typing import Union
 
+np.set_printoptions(precision=1,suppress=True)
+
+def solveUpperTriangularMatrix(R, b):
+    # The solution will be here
+    for step in range(len(b) - 1, 0 - 1, -1):
+        if R[step,step] == 0:
+            if b[step] != 0:
+                return "No solution"
+            else:
+                return "Infinity solutions"
+        else:
+            b[step] = b[step] / R[step,step]
+
+        for row in range(step - 1, 0 - 1, -1):
+            b[row] -= R[row,step] * b[step]
+    return b
+
 def householder(A):
     (n,m)=A.shape
     p=min(n,m)
@@ -26,51 +43,65 @@ def householder(A):
             A[j,j]=beta*(A[j,j]+alpha[j])
             A[j+1:,j]=beta*A[j+1:,j]
             for k in range(j+1,m):
-                gamma=2*A[j:,j].dot(A[j:,k])
+                gamma=2*np.inner(A[j:,j], A[j:,k])
                 A[j:,k]=A[j:,k]-gamma*A[j:,j]
     return A,alpha
 
-def loese_householder(H,alpha,b):
-    (n,m)=H.shape
-    b=b.copy()
-    x=np.zeros(n)
-    # b=Q^t b.
+def construct_Q(A):
+    (m,n)=A.shape
+    Q=np.identity(m)
+    for k in range(0,n):
+        v = np.matrix(A[k:,k])
+        Qv = Q[:, k:] * v
+        Q[:, k:] = Q[:, k:] - 2 * Qv * v.T
+    return Q
+
+def apply_QT(A, X):
+    (m,n)=A.shape
+    for k in range(0,n):
+        v = np.matrix(A[k:,k])
+        vTX = v.T * X[k:, k:]
+        X[k:, k:] = X[k:, k:] - 2 * v * vTX
+    return X
+
+def apply_QT(A, X):
+    (m,n)=A.shape
+    QTX = X
+    for k in range(0,n):
+        v = np.matrix(A[k:,k])
+        vTX = v.T * QTX[k:, :]
+        X[k:, :] = QTX[k:, :] - 2 * v * vTX
+    return X
+
+
+def construct_R(A, alpha):
+    (m,n)=A.shape
+    R=np.zeros((m,n))
     for j in range(0,n):
-        b[j:]=b[j:]-2*(H[j:,j].dot(b[j:]))*H[j:,j]
-    # Auflösen von Rx=b.
-    for i in range(0,n):
-        j=n-1-i
-        b[j]=b[j]-H[j,j+1:].dot(x[j+1:])
-        x[j]=-b[j]/alpha[j]
-    return x
+        for i in range(0,j+1):
+            if i == j:
+                R[i,j] = -alpha[j]
+            else:
+                R[i,j]=A[i,j]
+    return R
 
-def householder_vectorized(a):
-    """Use this version of householder to reproduce the output of np.linalg.qr 
-    exactly (specifically, to match the sign convention it uses)
-    
-    based on https://rosettacode.org/wiki/QR_decomposition#Python
-    """
-    v = a / (a[0] + np.copysign(np.linalg.norm(a), a[0]))
-    v[0] = 1
-    tau = (2 / (v.T @ v))[0,0]
-    
-    return v,tau
+def construct_R_1(A, alpha):
+    (m,n)=A.shape
+    R=np.zeros((n,n))
+    for j in range(0,n):
+        for i in range(0,j+1):
+            if i == j:
+                R[i,j] = -alpha[j]
+            else:
+                R[i,j]=A[i,j]
+    return R
 
-def qr_decomposition(A: np.ndarray) -> Union[np.ndarray, np.ndarray]:
-    m,n = A.shape
-    R = A.copy()
-    Q = np.identity(m)
-    
-    for j in range(0, n):
-        # Apply Householder transformation.
-        v, tau = householder_vectorized(R[j:, j, np.newaxis])
-        
-        H = np.identity(m)
-        H[j:, j:] -= tau * np.outer(v, v)
-        R = H @ R
-        Q = H @ Q
-        
-    return Q.T, R
+def permutation(set, n, settilde, ntilde, mode="col"):
+    setsettilde = list(zip(list(np.arange(0,n + ntilde)),list(set) + list(settilde)))
+    sor = sorted(setsettilde, key=lambda x: x[1])
+
+    swaps, sortedset = [[i for i, j in sor], [j for i, j in sor]]
+    return swaps, sortedset
 
 n_most_profitable_indices = 5 # bounded from 3 to 8
 epsilon = 0.2 # 0.1 to 0.5 according to https://mediatum.ub.tum.de/doc/1107998/426923.pdf#page=64&zoom=100,117,534
@@ -81,24 +112,9 @@ maxiter = 5 # 1 to 5
 A = scipy.sparse.csr_matrix(mmread("CudaRuntimeTest\orsirr_2.mtx"))
 N = A.shape[0]
 M = scipy.sparse.identity(N, format='csr')
-#M[1,0] = 1
-#M[2,0] = 1
-#M[3,0] = 1
-#M[4,0] = 1
-#M[5,0] = 1
+
 AInv = scipy.sparse.linalg.inv(A)
 
-def permutation(set, n, settilde, ntilde, mode="col"):
-    setsettilde = list(zip(list(np.arange(0,n + ntilde)),list(set) + list(settilde)))
-    sor = sorted(setsettilde, key=lambda x: x[1])
-
-    swaps, rest = [[i for i, j in sor], [j for i, j in sor]]
-
-    if mode == "col":
-        P = np.identity(n + ntilde)[:,swaps]
-    elif mode == "row":
-        P = np.identity(n + ntilde)[swaps,:]
-    return P
 
 for k in range(0, M.shape[1]):
     print("column: ", k)
@@ -124,44 +140,18 @@ for k in range(0, M.shape[1]):
     # Reduced matrix A_IJ (A hat) an n1 x n2 matrix
     A_IJ = A[np.ix_(I, J)].todense()
 
-    # Compute ehat_k
-    ehat_k = e_k[I]
-
-    #A_IJ = np.hstack((np.vstack((A_IJ, np.zeros((n1,n2)))),np.vstack((np.zeros((n1,n2)), np.zeros((n1,n2))))))
+    # Compute ehat_k. Not necessary since we just select the list(I).index(k)th column. 
+    #ehat_k = e_k[I]
 
     # Compute QR decomp. R_1 upper triangular n1 x n1 matrix. 0 is an (n1 − n2)×n2 zero matrix. Q1 is m×n, Q2 is m×(m − n)
-    (h, tau) = np.linalg.qr(A_IJ, mode="raw")
-    Q_, R_ = np.linalg.qr(A_IJ, mode="complete")
-    #print("R: ",R)
-
-#Foreach column in A_IJ
-    #R = A_IJ
-    #Q = np.identity(n1)
-    #vs = h
-    #print(A_IJ.shape)
-    #for i in range(0, n2):
-    #    v = h[i].T
-    #    v = v[i:]
-    #    v[0] = 1
-    #    print(v)
-    #    vvT = np.outer(v,v)
-    #    Q[0:n1, i:n1] = Q[0:n1, i:n1] - tau[i] * np.matmul(Q[0:n1, i:n1] , vvT)
-    #    R[i:n1, i:n2] = R[i:n1,i:n2] - tau[i] * np.matmul(vvT, R[i:n1,i:n2])
-    
-    Q, R = qr_decomposition(A_IJ)
-
-    H,alpha=householder(A_IJ.copy())
-    
-    print(H)
-    print(R)
-
-    R_1 = R[:n2,:n2]
-    Q = Q[:n1,:n1]
+    H,alpha = householder(A_IJ)
+    Q = construct_Q(H)
+    R_1 = construct_R_1(H,alpha)
 
     # Compute mhat_k
-    chat_k = Q.T * ehat_k
+    chat_k = np.matrix(Q.T[:,list(I).index(k)]).T
 
-    mhat_k = inv(R_1) * chat_k[0:n2,:]
+    mhat_k = np.matrix(solveUpperTriangularMatrix(R_1, np.matrix(chat_k[0:n2])))
 
     # Scatter to original column
     m_k[J] = mhat_k
@@ -174,7 +164,7 @@ for k in range(0, M.shape[1]):
         iter += 1
         print("iter: ",iter)
         # Calculate L
-        L = np.union1d(I,k) #np.nonzero(r)[0] # Lk ← Ik ∪ {k} ? from paper https://mediatum.ub.tum.de/doc/1107998/426923.pdf#page=64&zoom=100,117,534
+        L = np.nonzero(r)[0] #np.nonzero(r)[0] # Lk ← Ik ∪ {k} ? from paper https://mediatum.ub.tum.de/doc/1107998/426923.pdf#page=64&zoom=100,117,534
 
         # Calculate Jtilde: All of the the new column indices of A that appear in all
         # L rows but not in J
@@ -195,7 +185,7 @@ for k in range(0, M.shape[1]):
             rho_jsquared = r_norm*r_norm - (rTAe_j * rTAe_j) / (Ae_jnorm * Ae_jnorm)
             j_rho_pairs.append((rho_jsquared[0,0],j))
 
-        # Creates min heap to quickly find indices with lowest error
+        # Creates min heap to quickly find indices with lowest error.
         heap = []
         for pair in j_rho_pairs:
                 heapq.heappush(heap, (pair[0], pair[1]))
@@ -209,31 +199,24 @@ for k in range(0, M.shape[1]):
 
         # Update Q, R
         n2tilde = len(Jtilde)
-
-        J = np.array(J)
-        I = np.array(I)
         Jtilde = np.sort(Jtilde) # Needed for calculation of permutation matrices
         Itilde = np.setdiff1d(np.unique(A[:,np.union1d(Jtilde,J)].nonzero()[0]), I)
-            
         n1tilde = len(Itilde)
 
         AIJtilde = A[np.ix_(I, Jtilde)]
         AItildeJtilde = A[np.ix_(Itilde,Jtilde)]
 
         # Find permutation matrices
-        Pc = permutation(J, n2, Jtilde, n2tilde, mode="col")
-        Pr = permutation(I, n1, Itilde, n1tilde, mode="row")
-        Pc = Pc.T
-        Pr = Pr.T
+        colswaps, Jsorted = permutation(J, n2, Jtilde, n2tilde, mode="col")
+        rowswaps, Isorted = permutation(I, n1, Itilde, n1tilde, mode="row")
 
         Au = Q.T * AIJtilde
         B_1 = Au[:n2,:]
         B_2 = np.vstack((Au[n2:n1,:], AItildeJtilde.todense()))
 
-        print(A[np.ix_(np.union1d(I, Itilde), np.union1d(J, Jtilde))].shape)
         # QR decompose B2
-        QB, R_B = qr_decomposition(B_2)
-        QB, R_B = np.linalg.qr(B_2, mode="complete")
+        H,alpha = householder(B_2.copy())
+        R_B = np.matrix(construct_R_1(H,alpha))
 
         # Matrices to use in new QR
         In1tilde = np.identity(n1tilde)
@@ -241,40 +224,27 @@ for k in range(0, M.shape[1]):
         n1tilden1zeros = np.zeros((n1tilde, n1))
         n1n1tildezeros = np.zeros((n1, n1tilde))
 
-        # for the new Q, which is a matrix product
-        firstmat17 = np.hstack((np.vstack((Q, n1tilden1zeros)), np.vstack((n1n1tildezeros, In1tilde))))
-        secondmat17 = np.hstack((np.vstack((In2, np.zeros((n1-n2+n1tilde,n2)))), np.vstack((np.zeros((n2,n1-n2+n1tilde)), QB))))
-
         # Construct R and Q by stacking and matrix products
-        R_1 = np.hstack((np.vstack((R_1, np.zeros((n2tilde, n2)))), np.vstack((B_1, R_B[0:n2tilde])))) # don't need entire R
-        Q = firstmat17 * secondmat17
+        R_1 = np.hstack((np.vstack((R_1, np.zeros((n2tilde, n2)))), np.vstack((B_1, R_B)))) # don't need entire R
+
+        q = np.hstack((np.vstack((Q[:,n2:], np.zeros((n1tilde,n1-n2)))), np.vstack((np.zeros((n1,n1tilde)), np.identity(n1tilde)))))
+        Q = np.hstack((np.vstack((Q[:,:n2], np.zeros((n1tilde,n2)))), apply_QT(H,q.T).T))
 
         # New J and I
-        J = np.union1d(Jtilde,J) # J U Jtilde
+        J = np.append(J,Jtilde) # J U Jtilde
         n2 = J.size
-        I = np.union1d(Itilde, I) # Itilde
+        I = np.append(I,Itilde) # Itilde
         n1 = I.size
-        #R_1 = R[0:n2,:]
     
-        etilde_k = Pr * e_k[I]
-        rowofQ = etilde_k.nonzero()[0]
+        chat_k = np.matrix(Q.T[:,list(I).index(k)]).T
 
-        print("-------", rowofQ)
-        chat_k = Q.T * etilde_k # selects the kth column but permuted.
-        mtilde_k = inv(R_1) * chat_k[0:n2,:] #inv(R_1) * chat_k[0:n2,:]
+        mtilde_k = np.matrix(solveUpperTriangularMatrix(R_1, np.matrix(chat_k[0:n2])))
 
-        
-        m_k[J] = Pc * mtilde_k
-
-        # Permute Q and R to be used in next iteration
-        Q = Pr.T * Q #
-        R_1 = R_1 * Pc.T
+        m_k[Jsorted] = mtilde_k[colswaps,:]
         
         # Compute residual r
-        r = A[:,J] * m_k[J] - e_k
+        r = A[:,Jsorted] * m_k[Jsorted] - e_k
         r_norm = np.linalg.norm(r)
-
-        print(r_norm)
 
     # Place result column in matrix
     M[:,k] = m_k

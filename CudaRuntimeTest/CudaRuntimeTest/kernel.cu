@@ -83,7 +83,7 @@ int main()
 
     try
     {
-        const char* file_name = "../sherman1.mtx";
+        const char* file_name = "../orsirr_2.mtx";
         Utils::read_matrix_market_file_col_major_sparse(file_name, n_rows, n_cols, nnz, csc_col_ptr_A,
             csc_val_A, csc_row_ind_A);
         printf("%s, %d x %d matrix loaded.\n", file_name, n_rows, n_cols);
@@ -181,6 +181,7 @@ int main()
 #if _DEBUG
     float avgn1 = static_cast<float>(Is_size) / static_cast<float>(n_cols);
 #endif
+    int* ind_of_col_k_in_I_k = static_cast<int*>(malloc(sizeof(int)*n_cols));
     int* Is = static_cast<int*>(malloc(sizeof(int) * Is_size));
     double* A_hats = static_cast<double*>(malloc(sizeof(double) * A_hats_size));
     for (int k = 0; k < n_cols; k++)
@@ -195,11 +196,23 @@ int main()
             const int col_end = csc_col_ptr_A[col_ind + 1];
             for (int i = col_start; i < col_end; i++)
             {
-                Is[Is_inds[i - col_start]] = csc_row_ind_A[i];
+                const int row_ind = csc_row_ind_A[i];
+                const int I_ind = i - col_start;
+                if (row_ind == k)
+                {
+                    // Keep track of index of column k in I_k
+                    ind_of_col_k_in_I_k[k] = I_ind;
+                }
+                Is[Is_inds[k] + I_ind] = row_ind;
                 A_hats[A_hats_inds[k] + IDX2C(i - col_start, j, n1s[k])] = csc_val_A[i];
             }
         }
 
+    }
+
+    for (int i = 0; i < n_cols; i++)
+    {
+        printf("column: %d\nindex: ------%d\n",i, ind_of_col_k_in_I_k[i]);
     }
     /*
     double* Qs = static_cast<double*>(malloc(sizeof(double) * Qs_size));
