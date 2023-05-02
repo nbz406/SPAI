@@ -15,7 +15,7 @@ from scipy.io import mmread
 
 from typing import Union
 
-np.set_printoptions(precision=1,suppress=True)
+np.set_printoptions(precision=10,suppress=True)
 
 def solveUpperTriangularMatrix(R, b):
     # The solution will be here
@@ -33,18 +33,18 @@ def solveUpperTriangularMatrix(R, b):
     return b
 
 def householder(A):
-    (n,m)=A.shape
-    p=min(n,m)
-    alpha=np.zeros(m)
+    (n1,n2)=A.shape
+    p=min(n1,n2)
+    alpha=np.zeros(n2)
     for j in range(0,p):
         alpha[j]=np.linalg.norm(A[j:,j])*np.sign(A[j,j])
         if (alpha[j]!=0):
             beta=1/math.sqrt(2*alpha[j]*(alpha[j]+A[j,j]))
             A[j,j]=beta*(A[j,j]+alpha[j])
             A[j+1:,j]=beta*A[j+1:,j]
-            for k in range(j+1,m):
-                gamma=2*np.inner(A[j:,j], A[j:,k])
-                A[j:,k]=A[j:,k]-gamma*A[j:,j]
+            for k in range(j+1,n2):
+                vTA = A[j:,k].T * A[j:,j]
+                A[j:,k]=A[j:,k]-2*A[j:,j]*vTA
     return A,alpha
 
 def construct_Q(A):
@@ -145,7 +145,9 @@ for k in range(0, M.shape[1]):
 
     # Compute QR decomp. R_1 upper triangular n1 x n1 matrix. 0 is an (n1 − n2)×n2 zero matrix. Q1 is m×n, Q2 is m×(m − n)
     H,alpha = householder(A_IJ)
+    print(H)
     Q = construct_Q(H)
+    print("Q = " , Q)
     R_1 = construct_R_1(H,alpha)
 
     # Compute mhat_k

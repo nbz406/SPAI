@@ -13,6 +13,10 @@
 #define IDX2C(i,j,ld) (((j)*(ld))+(i))
 #define iszero(val) (abs(val) < 0.00000001)
 
+template <typename T> int sgn(T val) {
+    return (T(0) < val) - (val < T(0));
+}
+
 #define cudacall(call)                                                                                                          \
     do                                                                                                                          \
     {                                                                                                                           \
@@ -98,10 +102,6 @@ int main()
     int Js_size = 0;
     int Is_size = 0;
     int A_hats_size = 0;
-    int maxn1 = 0;
-    int maxn2 = 0;
-    int minn2 = n_cols;
-    int minn1 = n_cols;
 
     int* n2s = static_cast<int*>(malloc(sizeof(int) * n_cols));
     int* n1s = static_cast<int*>(malloc(sizeof(int) * n_cols));
@@ -117,22 +117,15 @@ int main()
         // Construct J by getting all row indices from beg to end
         const int n2 = end - beg;
         n2s[k] = n2;
-        if (n2 > maxn2)
-        {
-            maxn2 = n2;
-        }
-        if (n2 < minn2)
-        {
-            minn2 = n2;
-        }
     }
+
     // scan n2s
     for (int k = 0; k < n_cols; k++)
     {
         Js_inds[k] = Js_size;
         Js_size += n2s[k];
     }
-    float avgn2 = static_cast<float>(Js_size) / static_cast<float>(n_cols);
+
     int* Js = static_cast<int*>(malloc(sizeof(int) * Js_size));
 
     for (int k = 0; k < n_cols; k++)
@@ -152,20 +145,12 @@ int main()
             n1 += csc_col_ptr_A[col_ind + 1] - csc_col_ptr_A[col_ind];
         }
         n1s[k] = n1;
-        if (n1 > maxn1)
-        {
-            maxn1 = n1;
-        }
-        if (n1 < minn1)
-        {
-            minn1 = n1;
-        }
     }
-    // Scan n1s
+
     int Qs_size = 0;
-    /*
+    // Scan n1s
     int* Qs_inds = static_cast<int*>(malloc(sizeof(int) * n_cols));
-    */
+
     for (int k = 0; k < n_cols; k++)
     {
         const int n1 = n1s[k];
@@ -173,20 +158,17 @@ int main()
         Is_size += n1;
         A_hats_inds[k] = A_hats_size;
         A_hats_size += n1 * n2s[k];
-        /*
         Qs_inds[k] = Qs_size;
         Qs_size += n1 * n1;
-        */
     }
-#if _DEBUG
-    float avgn1 = static_cast<float>(Is_size) / static_cast<float>(n_cols);
-#endif
+
+
     int* ind_of_col_k_in_I_k = static_cast<int*>(malloc(sizeof(int)*n_cols));
     int* Is = static_cast<int*>(malloc(sizeof(int) * Is_size));
     double* A_hats = static_cast<double*>(malloc(sizeof(double) * A_hats_size));
+
     for (int k = 0; k < n_cols; k++)
     {
-        // Maybe find max dimensions between columns to make QR batched work
         // Get indices from csc_row_ind_A starting from the column pointers from csc_col_ptr_A[J]
         // Construct dense A[I,J] in column major format to be used in batched QR decomposition.
         for (int j = 0; j < n2s[k]; j++)
@@ -207,76 +189,67 @@ int main()
                 A_hats[A_hats_inds[k] + IDX2C(i - col_start, j, n1s[k])] = csc_val_A[i];
             }
         }
-
     }
 
-    for (int i = 0; i < n_cols; i++)
-    {
-        printf("column: %d\nindex: ------%d\n",i, ind_of_col_k_in_I_k[i]);
-    }
-    /*
-    double* Qs = static_cast<double*>(malloc(sizeof(double) * Qs_size));
-
+    // Householder QR decomposition in place, will only need space for diagonal of Ahat: min(n1,n2)
+    int* alphas_inds = static_cast<int*>(malloc(sizeof(int) * n_cols));
+    int alphas_size = 0;
     for (int k = 0; k < n_cols; k++)
     {
-        const int n1 = n1s[k];
-        for (int j = 0; j < n1; j++)
-        {
-			for (int i = 0; i < n1; i++)
-			{
-				if (i == j)
-				{
-                    Qs[Qs_inds[k] + IDX2C(i, j, n1)] = 1.0;
-				}
-				else
-				{
-                    Qs[Qs_inds[k] + IDX2C(i, j, n1)] = 0.0;
-				}
-			}
-        }
+        alphas_inds[k] = alphas_size;
+        alphas_size += std::min(n1s[k], n2s[k]);
     }
 
-    // attempt at QR
-    for (int ok = 0; ok < n_cols; ok++)
-    {
-        const int m = n1s[ok];
-        const int n = n2s[ok];
-        double* A_hat = &A_hats[A_hats_inds[ok]];
-        for (int k = 0; k < n; k++)
+    double* alphas = static_cast<double*>(malloc(sizeof(double) * alphas_size));
+
+    for (int k = 0; k < n_cols; k++) {
+        const int A_hat_ind = A_hats_inds[k];
+        const int n1 = n1s[k];
+        const int n2 = n2s[k];
+        const int p = std::min(n1, n2);
+        for (int j = 0; j < p; j++)
         {
-	        //col ak from k to m. house n : h_n = m - k
-            const int col_n = m - k;
-            double *x =  &A_hat[IDX2C(0, k, m)];
-
-            //dot
-            double dot = 0.0;
-            for (int i = 0; i < col_n; i++)
+            //alpha[j]=np.linalg.norm(A[j:,j])*np.sign(A[j,j])
+            double A_col_norm_squared = 0;
+            const int sign = sgn(A_hats[A_hat_ind]);
+            for (int i = j; i < n1; i++)
             {
-                dot += x[i] * x[i];
+                A_col_norm_squared += pow(A_hats[A_hat_ind + IDX2C(i, j, n1)], 2);
             }
-            double* v = static_cast<double*>(malloc(sizeof(double) * col_n));
-            v[0] = x[0] - sqrt(dot);
-            for (int i = 1; i < col_n; i++)
-            {
-                v[i] = x[i];
-            }
-            double dotprime = dot - pow(x[0], 2) + pow(v[0], 2);
-            double beta = !iszero(dotprime) ? 2.0 / dotprime : 0.0;
+            const double alpha_j = sign * sqrt(A_col_norm_squared);
+            alphas[alphas_inds[k] + j] = alpha_j;
 
-            double* vvt = static_cast<double*>(malloc(sizeof(double) * col_n * col_n));
-            double* Bvvt = static_cast<double*>(malloc(sizeof(double) * col_n * col_n));
-            for (int j = 0; j < col_n; j++)
+            if (!iszero(alpha_j))
             {
-                for (int i = 0; i < col_n; i++)
+                const double A_jj = A_hats[A_hat_ind + IDX2C(j, j, n1)];
+                const double beta = 1 / sqrt(2 * alpha_j * (alpha_j + A_jj));
+                A_hats[A_hat_ind + IDX2C(j, j, n1)] = beta * (A_jj + alpha_j);
+                //A[j+1:,j]=beta*A[j+1:,j] : rest of column multiply by beta.
+                for (int i = j + 1; i < n1; i++)
                 {
-                    vvt[IDX2C(i, j, col_n)] = v[i] * v[j];
-                    Bvvt[IDX2C(i, j, col_n)] = vvt[IDX2C(i, j, col_n)] *beta;
+                    A_hats[A_hat_ind + IDX2C(i, j, n1)] *= beta;
+                }
+                for (int l = j + 1; l < n1; l++)
+                {
+                    // vTA = A[j:,l].T * A[j:,j]
+                    double vTA = 0;
+                    for (int i = j; i < n1; i++)
+                    {
+                        vTA += A_hats[A_hat_ind + IDX2C(i, l, n1)] * A_hats[A_hat_ind + IDX2C(i, j, n1)];
+                    }
+                    for (int i = j; i < n1; i++)
+                    {
+                        A_hats[A_hat_ind + IDX2C(i, l, n1)] = A_hats[A_hat_ind + IDX2C(i, l, n1)] - 2 * A_hats[A_hat_ind + IDX2C(i, j, n1)] * vTA;
+                    }
                 }
             }
-            //matmul
         }
     }
-    */
+
+    // construct Q (needed for update) and R in place (in A_hats
+
+
+	
     for (int k = 0; k < n_cols; k++)
     {
         const int batchsize = 1;
