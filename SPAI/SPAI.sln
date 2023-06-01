@@ -1,0 +1,32 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.5.33516.290
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "SPAI", "SPAI\SPAI.vcxproj", "{2F3500C4-141F-4B4A-8EAC-0CAE55CE2863}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{E7CF0ACB-AC0B-47E6-AFE3-D86FA6CE82A4}"
+	ProjectSection(SolutionItems) = preProject
+		orsirr_1.mtx = orsirr_1.mtx
+		orsirr_2.mtx = orsirr_2.mtx
+		sherman1.mtx = sherman1.mtx
+	EndProjectSection
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|x64 = Debug|x64
+		Release|x64 = Release|x64
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{2F3500C4-141F-4B4A-8EAC-0CAE55CE2863}.Debug|x64.ActiveCfg = Debug|x64
+		{2F3500C4-141F-4B4A-8EAC-0CAE55CE2863}.Debug|x64.Build.0 = Debug|x64
+		{2F3500C4-141F-4B4A-8EAC-0CAE55CE2863}.Release|x64.ActiveCfg = Release|x64
+		{2F3500C4-141F-4B4A-8EAC-0CAE55CE2863}.Release|x64.Build.0 = Release|x64
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {8F096C40-79DD-400C-AEBA-3397DC43F4B4}
+	EndGlobalSection
+EndGlobal

@@ -15,6 +15,9 @@
     <None Include="..\sherman1.mtx">
       <Filter>Resource Files</Filter>
     </None>
+    <None Include="..\orsirr_2.mtx">
+      <Filter>Resource Files</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Utils.cpp" />

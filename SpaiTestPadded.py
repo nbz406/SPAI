@@ -15,11 +15,10 @@ from scipy.io import mmread
 
 from typing import Union
 
-np.set_printoptions(precision=20,suppress=True)
+np.set_printoptions(precision=7,suppress=True)
 
-def solveUpperTriangularMatrix(R, b):
-    # The solution will be here
-    for step in range(len(b) - 1, 0 - 1, -1):
+def solveUpperTriangularMatrix(R, b, size):
+    for step in range(size - 1, 0 - 1, -1):
         if R[step,step] == 0:
             if b[step] != 0:
                 return "No solution"
@@ -30,7 +29,7 @@ def solveUpperTriangularMatrix(R, b):
 
         for row in range(step - 1, 0 - 1, -1):
             b[row] -= R[row,step] * b[step]
-    return b
+    return b[:size]
 
 def householder(A):
     (n1,n2)=A.shape
@@ -54,6 +53,17 @@ def construct_Q(A):
         v = np.matrix(A[k:,k])
         Qv = Q[:, k:] * v
         Q[:, k:] = Q[:, k:] - 2 * Qv * v.T
+    return Q
+
+def construct_Q_np(A, tau):
+    (m,n)=A.shape
+    Q=np.identity(m)
+    for k in range(0,n):
+        v = np.matrix(A[k:,k])
+        v[0] = 1
+        v = np.sqrt(tau[k]) * v
+        Qv = Q[:, k:] * v
+        Q[:, k:] = Q[:, k:] - Qv * v.T
     return Q
 
 def apply_QT(A, X):
@@ -105,31 +115,30 @@ def permutation(set, n, settilde, ntilde, mode="col"):
 
 n_most_profitable_indices = 5 # bounded from 3 to 8
 epsilon = 0.2 # 0.1 to 0.5 according to https://mediatum.ub.tum.de/doc/1107998/426923.pdf#page=64&zoom=100,117,534
-maxiter = 5 # 1 to 5
+maxiter = 1000 # 1 to 5
 
 # M is just a sparse identity matrix
 # A is a csr format of the matrix that we wish to invert
 A = scipy.sparse.csr_matrix(mmread("CudaRuntimeTest\orsirr_2.mtx"))
 N = A.shape[0]
 M = scipy.sparse.identity(N, format='csr')
-#M[1,0] = 1
-#M[2,0] = 1
-#
-#M[2,1] = 1
-#M[3,1] = 1
+for j in range(0, M.shape[0]):
+    for i in range(0, min(M.shape[0] - j, 3)):
+        M[i+j,j] = 1
 
-#for j in range(0, M.shape[0]):
-#    for i in range(0, min(M.shape[0] - j, 3)):
-#        M[i+j,j] = 1
 
-print(M)
 
 AInv = scipy.sparse.linalg.inv(A)
-np.set_printoptions(precision=15)
+
 maxn1 = 0
 maxn2 = 0
-minn1 = maxiter*[M.shape[1]]
-minn2 = maxiter*[M.shape[1]]
+minn1 = M.shape[1]
+minn2 = M.shape[1]
+
+Is = []
+Js = []
+n1s = []
+n2s = []
 
 for k in range(0, M.shape[1]):
     print("column: ", k)
@@ -143,38 +152,67 @@ for k in range(0, M.shape[1]):
 
     # Calculate J
     J = m_k.nonzero()[0] # gets row inds of nonzero
+    Js.append(J)
     n2 = J.size
+    n2s.append(n2)
 
     # Calculate A(.,J)
     A_J = A[:,J]
 
     # Calculate I from A(.,J)
     I = np.unique(A_J.nonzero()[0])
+    Is.append(I)
     n1 = I.size
+    n1s.append(n1)
 
+    if n1 > maxn1:
+        maxn1 = n1    
+    if n2 > maxn2:
+        maxn2 = n2
+    if n1 < minn1:
+        minn1 = n1
+    if n2 < minn2:
+        minn2 = n2
+
+for k in range(0,M.shape[0]):
+    print(Is[k])
+
+maxn2 = 5
+
+for k in range(0, M.shape[1]):
     # Reduced matrix A_IJ (A hat) an n1 x n2 matrix
-    A_IJ = A[np.ix_(I, J)].todense()
-    #A_IJ = np.hstack((np.vstack((A_IJ,np.zeros((10,n2)))),np.zeros((10+n1,n2))))
+    A_IJ = A[np.ix_(Is[k], Js[k])].todense()
+    
+    print(maxn1-n1s[k],n2s[k])
+    A_IJ = np.vstack((A_IJ,np.zeros((maxn1-n1s[k],n2s[k]))))
+    if (maxn2-n2s[k] > 0):
+        A_IJ = np.hstack((A_IJ,np.zeros((maxn1,maxn2-n2s[k]))))
+    print(A_IJ)
 
     # Compute ehat_k. Not necessary since we just select the list(I).index(k)th column. 
     #ehat_k = e_k[I]
 
     # Compute QR decomp. R_1 upper triangular n1 x n1 matrix. 0 is an (n1 − n2)×n2 zero matrix. Q1 is m×n, Q2 is m×(m − n)
-
-    #Q, R = np.linalg.qr(A_IJ, mode="complete")
-    #Q = Q[:n1,:n1]
-    #print("numpy: ", R_1)
-    
-    H,alpha = householder(A_IJ.copy())
-    #print("H: ",H)
-    #print("alpha: ",alpha)
+    #q,tau = np.linalg.qr(A_IJ, mode ="raw")
+    #print(construct_Q_np(q.T.copy(),tau))
+    #Q = construct_Q_np(q.T.copy(),tau)
+    #print(Q)
+    H,alpha = householder(A_IJ)
+    #print(H)
     Q = construct_Q(H)
+
     R_1 = construct_R_1(H,alpha)
+    print(R_1)
+    #Q = Q[:n1,:n1]
+    #R_1 = R_1[:n2,:n2]
 
     # Compute mhat_k
-    chat_k = np.matrix(Q.T[:,list(I).index(k)]).T
+    chat_k = np.matrix(Q.T[:,list(Is[k]).index(k)]).T
 
-    mhat_k = np.matrix(solveUpperTriangularMatrix(R_1, np.matrix(chat_k[0:n2])))
+    #print("ss",solveUpperTriangularMatrix(R_1, np.matrix(chat_k[0:1]), n2))
+    mhat_k = np.matrix(solveUpperTriangularMatrix(R_1, np.matrix(chat_k[0:1]), n2)) #maxn2
+
+    print("mhat_k: ",mhat_k)
 
     # Scatter to original column
     m_k[J] = mhat_k
@@ -185,11 +223,18 @@ for k in range(0, M.shape[1]):
     r[I] = rI
     r_norm = np.linalg.norm(r)
 
+    #print(r_norm)
+    
+    #print(Q)
+
+    Q = Q[:n1,:n1]
+    R_1 = R_1[:n2,:n2]
+
     while r_norm > epsilon and iter < maxiter:
         iter += 1
         print("iter: ",iter)
         # Calculate L
-        L = np.union1d(I,k) #np.nonzero(r)[0] # Lk ← Ik ∪ {k} ? from paper https://mediatum.ub.tum.de/doc/1107998/426923.pdf#page=64&zoom=100,117,534
+        L = np.nonzero(r)[0] #np.nonzero(r)[0] # Lk ← Ik ∪ {k} ? from paper https://mediatum.ub.tum.de/doc/1107998/426923.pdf#page=64&zoom=100,117,534
 
         # Calculate Jtilde: All of the the new column indices of A that appear in all
         # L rows but not in J
@@ -202,18 +247,13 @@ for k in range(0, M.shape[1]):
 
         # Calculate the new norm of the modified residual and record the indices j
         # Could get A_J and each column is a j
-        avg_rho = 0
         j_rho_pairs = []
         for j in Jtilde:
             Ae_j = A[:,j].todense()
             Ae_jnorm = np.linalg.norm(Ae_j)
-            rTAe_j = r.T * Ae_j ## if A[:,j] (row_inds[col_ptr[j]]) overlap with nonzeros of r, then mult, otherwise don't
+            rTAe_j = r.T * Ae_j
             rho_jsquared = r_norm*r_norm - (rTAe_j * rTAe_j) / (Ae_jnorm * Ae_jnorm)
-            avg_rho += rho_jsquared
             j_rho_pairs.append((rho_jsquared[0,0],j))
-
-        avg_rho = avg_rho / len(j_rho_pairs)
-        print(avg_rho)
 
         # Creates min heap to quickly find indices with lowest error.
         heap = []
@@ -224,36 +264,25 @@ for k in range(0, M.shape[1]):
         pops = 0
         Jtilde = []
         while len(heap) > 0 and pops < n_most_profitable_indices:
-            pair = heapq.heappop(heap)
-            if (pair[0] < avg_rho):
-                Jtilde.append(pair[1])
+            Jtilde.append(heapq.heappop(heap)[1])
             pops += 1
-
 
         # Update Q, R
         n2tilde = len(Jtilde)
         Jtilde = np.sort(Jtilde) # Needed for calculation of permutation matrices
-        print(Jtilde)
-
-        Itilde = np.setdiff1d(np.unique(A[:,Jtilde].nonzero()[0]), I)
+        Itilde = np.setdiff1d(np.unique(A[:,np.union1d(Jtilde,J)].nonzero()[0]), I)
         n1tilde = len(Itilde)
+
+        AIJtilde = A[np.ix_(I, Jtilde)]
+        AItildeJtilde = A[np.ix_(Itilde,Jtilde)]
 
         # Find permutation matrices
         colswaps, Jsorted = permutation(J, n2, Jtilde, n2tilde, mode="col")
         rowswaps, Isorted = permutation(I, n1, Itilde, n1tilde, mode="row")
 
-        AIJtilde = A[np.ix_(I, Jtilde)]
-        AItildeJtilde = A[np.ix_(Itilde,Jtilde)]
-
-        print("AItildeJtilde: ", AItildeJtilde.todense())
-
         Au = Q.T * AIJtilde # needs padding
-        print("Au: ", Au)
         B_1 = Au[:n2,:]
         B_2 = np.vstack((Au[n2:n1,:], AItildeJtilde.todense()))
-        print("B_2 = ", B_2)
-
-        print(f"B_2.shape(): {B_2.shape}, calc: {n1-n2 + n1tilde}")
 
         # QR decompose B2
         H,alpha = householder(B_2.copy())
@@ -277,12 +306,9 @@ for k in range(0, M.shape[1]):
         I = np.append(I,Itilde) # Itilde
         n1 = I.size
 
-        if n1 > maxn1:
-            maxn1 = n1
-
         chat_k = np.matrix(Q.T[:,list(I).index(k)]).T
 
-        mtilde_k = np.matrix(solveUpperTriangularMatrix(R_1, np.matrix(chat_k[0:n2])))
+        mtilde_k = np.matrix(solveUpperTriangularMatrix(R_1, np.matrix(chat_k[0:n2]), n2))
 
         m_k[Jsorted] = mtilde_k[colswaps,:]
         
@@ -294,8 +320,9 @@ for k in range(0, M.shape[1]):
     # Place result column in matrix
     M[:,k] = m_k
 
-
-print("maxn1: ", maxn1)
-
+print("maxn1: ",maxn1)
+print("maxn2: ",maxn2)
+print("minn2: ", minn2)
+print("minn1: ", minn1)
 print(np.linalg.norm(A * M - np.identity(M.shape[1])))
 print(np.linalg.norm(A * AInv - np.identity(M.shape[1])))
