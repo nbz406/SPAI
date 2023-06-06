@@ -644,7 +644,7 @@ int main()
     cublascall(cublasCreate(&handle));
 
     const int inds_per_iter = 5;
-    const int max_iter = 5;
+    const int max_iter = 10;
     const double epsilon = 0.2;
 
     int n_rows, n_cols, nnz;
@@ -654,7 +654,7 @@ int main()
 
     try
     {
-        const char* file_name = "../orsreg_1.mtx";
+        const char* file_name = "../orsirr_2.mtx";
         read_matrix_market_file_col_major_sparse(file_name, n_rows, n_cols, nnz, csc_col_ptr_A,
             csc_val_A, csc_row_ind_A);
         printf("%s, %d x %d matrix loaded.\n", file_name, n_rows, n_cols);
@@ -873,8 +873,6 @@ int main()
     }
 
     cudaMemcpy(d_Qs->array, Qs->array, sizeof(double) * n_cols * Q_size, cudaMemcpyHostToDevice);
-    dyn_arr<double>* vs = init_dyn_arr<double>(n_cols * maxn1);
-    dyn_arr<double>* Qvs = init_dyn_arr<double>(n_cols * maxn1);
 
 	cuda_dyn_arr<double>* d_vs = init_cuda_dyn_arr<double>(n_cols * maxn1);
     cuda_dyn_arr<double>* d_Qvs = init_cuda_dyn_arr<double>(n_cols * maxn1);
@@ -1024,7 +1022,7 @@ int main()
     while (above_epsilon && iter < max_iter)
     {
         iter++;
-        printf("iter: %d", iter);
+        printf("iter: %d\n", iter);
         // read each element of A in a coalesced way to get into L3 cache. If cond that cannot be optimized away by compiler
         // forall tid = 0 .. num_nonzeros do
         //   (a,i ) = A[tid]
@@ -1414,54 +1412,45 @@ int main()
             	memcpy(&Qnews->array[Qnew_size * k + maxnewn1 * j], &Qs->array[Q_size * k + maxn1 * j], sizeof(double) * maxn1);
             }
         }
+        cuda_resize_based_on_write_size(d_Qnews, Qnew_size* n_cols);
+        cudaMemcpy(d_Qnews->array, Qnews->array, Qnew_size* n_cols * sizeof(double), cudaMemcpyHostToDevice);
 
         // You only apply housholder to last n1 - n2 + n1tilde columns, so matrix starts at maxn1tilde * n2
-        resize_based_on_write_size(vs, n_cols * maxB2n);
-        resize_based_on_write_size(Qvs, n_cols * maxB2n); // Should be possible to do like before the loop but ran out of time
-        for (int k = 0; k < maxn2tilde; k++)
+        cuda_resize_based_on_write_size(d_vs, n_cols * maxB2n);
+        cuda_resize_based_on_write_size(d_Qvs, n_cols * maxB2n); // Should be possible to do like before the loop but ran out of time
+        
+        cudaMemcpy(d_n2tildes, n2tildes, sizeof(int)* n_cols, cudaMemcpyHostToDevice);
+
+        cudaOccupancyMaxPotentialBlockSize(&minGridSize, &blockSize, set_ptr_array, 0, 0);
+        gridSize = (n_cols + blockSize - 1) / blockSize;
+        set_ptr_array << <gridSize, blockSize >> > (d_QvsArray, d_Qvs->array, maxB2n, 0, 0, 0, n_cols);
+        for (int k = 0; k < maxB2n; k++)
         {
-        	const int k_to_m = maxB2n - k;
-            for (int kk = 0; kk < n_cols; kk++)
-            {
-                if (k < n2tildes[kk])
-                {
-                    vs->array[k_to_m * kk] = 1;
-                    for (int i = 1; i < k_to_m; i++)
-                        vs->array[kk * k_to_m + i] = B2s->array[B2_size * kk + IDX2C(k + i, k, maxB2n)];
-                } else
-                {
-                    for (int i = 0; i < k_to_m; i++)
-                        vs->array[kk * k_to_m + i] = 0;
-                }
-            }
+            const int k_to_m = maxB2n - k;
 
-        	for (int kk = 0; kk < n_cols; kk++)
-            {
-                for (int i = 0; i < maxB2n; i++)
-                    Qvs->array[maxB2n * kk + i] = 0;
-            
-                for (int j = 0; j < k_to_m; j++)
-                {
-                    for (int i = 0; i < maxB2n; i++)
-                        Qvs->array[maxB2n * kk + i] += Qnews->array[kk * Qnew_size + maxnewn1 * n2s[kk] + IDX2C(i, j + k, maxnewn1)] * vs->array[kk * k_to_m + j];
-                }
-            }
+            cudaOccupancyMaxPotentialBlockSize(&minGridSize, &blockSize, set_vs_initial, 0, 0);
+            gridSize = (k_to_m * n_cols + blockSize - 1) / blockSize;
+            set_vs_initial << <gridSize, blockSize >> > (d_vs->array, k_to_m, d_B2s->array, B2_size, d_n2tildes, maxB2n, k, k_to_m * n_cols);
 
-            for (int kk = 0; kk < n_cols; kk++)
-            {
-            	for (int i = 0; i < maxB2n; i++)
-					Qvs->array[maxB2n * kk + i] *= taus->array[kk * ltau + k];
-            }
-            
-            for (int kk = 0; kk < n_cols; kk++)
-            {
-		        for (int j = 0; j < k_to_m; j++)
-		        {
-		        	for (int i = 0; i < maxB2n; i++)
-		        		Qnews->array[kk * Qnew_size + maxnewn1 * n2s[kk] + IDX2C(i, j + k, maxnewn1)] -= Qvs->array[maxB2n * kk + i] * vs->array[kk * k_to_m + j];
-		        }
-	        }
+        	cudaOccupancyMaxPotentialBlockSize(&minGridSize, &blockSize, set_ptr_array_with_irregular_column_offsets, 0, 0);
+            gridSize = (n_cols + blockSize - 1) / blockSize;
+            set_ptr_array_with_irregular_column_offsets << <gridSize, blockSize >> > (d_QsArray, d_Qnews->array, Qnew_size, d_n2s, k, 0, maxnewn1, n_cols);
+            set_ptr_array << <gridSize, blockSize >> > (d_vsArray, d_vs->array, k_to_m, 0, 0, 0, n_cols);
+
+            double alpha = 1, beta = 0;
+            cublasDgemvBatched(handle, CUBLAS_OP_N, maxB2n, k_to_m, &alpha, d_QsArray, maxnewn1, d_vsArray, 1, &beta, d_QvsArray, 1, n_cols);
+
+            cudaOccupancyMaxPotentialBlockSize(&minGridSize, &blockSize, mult_taus, 0, 0);
+            gridSize = (maxB2n * n_cols + blockSize - 1) / blockSize;
+            mult_taus << <gridSize, blockSize >> > (d_Qvs->array, d_Taus->array, ltau, k, maxB2n, maxB2n * n_cols);
+
+            beta = 1; alpha = -1;
+            //cublascall(cublasDgemmBatched(handle, CUBLAS_OP_N, CUBLAS_OP_T, maxB2n, k_to_m, 1, &alpha, d_QvsArray, maxB2n, d_vsArray, k_to_m, &beta, d_QsArray, maxn1, n_cols));
+
+            cublasDgemmBatched(handle, CUBLAS_OP_N, CUBLAS_OP_T, maxB2n, k_to_m, 1, &alpha, d_QvsArray, maxB2n, d_vsArray, k_to_m, &beta, d_QsArray, maxnewn1, n_cols);
         }
+
+        cudaMemcpy(Qnews->array, d_Qnews->array, sizeof(double) * n_cols * Qnew_size, cudaMemcpyDeviceToHost);
 
         // chat_k: index of k in I'th row of Q transposed and first n2 elements.
         resize_based_on_write_size(mhats, n_cols* maxnewn2);
@@ -1538,8 +1527,6 @@ int main()
         Q_size = Qnew_size;
         A_size = Anew_size;
 
-        // do something about Ls
-
         resize_based_on_write_size(Is, n_cols* I_size);
         resize_based_on_write_size(Qs, n_cols* Q_size);
         resize_based_on_write_size(Ahats, n_cols* A_size);
@@ -1587,8 +1574,8 @@ int main()
             r_norms[k] = sqrt(norm);
         }
 
-        for (int k = 0; k < n_cols; k++)
-            printf("col %d norm: %f\n", k, r_norms[k]);
+        //for (int k = 0; k < n_cols; k++)
+        //    printf("col %d norm: %f\n", k, r_norms[k]);
 
         above_epsilon = false;
         for (int k = 0; k < n_cols && !above_epsilon; k++)
@@ -1597,7 +1584,125 @@ int main()
         }
     }
 
-    printf("s");
+    // scatter to m_k by associating mhats with J, sorting key-value pairs and eliminating non-valid entries (n_cols)
+    free(csc_row_ind_M); free(csc_val_M);
+    int offset = 0;
+    for (int k = 0; k < n_cols; k++)
+    {
+        csc_col_ptr_M[k] = offset;
+        offset += n2s[k];
+    }
+    csc_col_ptr_M[n_cols] = offset;
+    csc_val_M = (double*)malloc(sizeof(double) * offset);
+    csc_row_ind_M = (int*)malloc(sizeof(int) * offset);
+
+    for (int k = 0; k < n_cols; k++)
+    {
+	    std::vector<std::pair <int, double> > vect;
+
+        // Entering values in vector of pairs
+        for (int i = 0; i < n2s[k]; i++)
+            vect.push_back(std::make_pair(Js[J_size * k + i], mhats->array[maxn2 * k + i]));
+
+        // Using simple sort() function to sort
+        sort(vect.begin(), vect.end());
+
+        for (int i = 0; i < n2s[k]; i++)
+        {
+            csc_row_ind_M[csc_col_ptr_M[k] + i] = vect[i].first;
+            csc_val_M[csc_col_ptr_M[k] + i] = vect[i].second;
+        }
+    }
+
+    // Sorting pairs can be done in parallel, but the code below doesn't work:
+
+    //double* d_csc_val_M_in; cudaMalloc((void**)&d_csc_val_M_in, sizeof(double)* offset);
+    //double* d_csc_val_M; cudaMalloc((void**)&d_csc_val_M, offset * sizeof(double));
+    //int* d_csc_row_ind_M_in; cudaMalloc((void**)&d_csc_row_ind_M_in, sizeof(int)* offset);
+    //int* d_csc_row_ind_M; cudaMalloc((void**)&d_csc_row_ind_M, sizeof(int)* offset);
+    //
+    //for (int k = 0; k < n_cols; k++)
+    //{
+    //    cudaMemcpy(&d_csc_val_M_in[csc_col_ptr_M[k]], &mhats->array[maxn2 * k], n2s[k] * sizeof(double), cudaMemcpyHostToDevice);
+    //    cudaMemcpy(&d_csc_row_ind_M_in[csc_col_ptr_M[k]], &Js[J_size * k], n2s[k] * sizeof(int), cudaMemcpyHostToDevice);
+    //}
+    //
+    //void* d_temp_storage = NULL;
+    //size_t   temp_storage_bytes = 0;
+    //cub::DeviceSegmentedRadixSort::SortPairs(d_temp_storage, temp_storage_bytes, d_csc_row_ind_M_in, d_csc_row_ind_M, d_csc_val_M_in, d_csc_val_M, offset, n_cols, d_Joffsets, d_Joffsets + 1);
+    //
+	//// Allocate temporary storage
+    //cudaMalloc(&d_temp_storage, temp_storage_bytes);
+    //// Run sorting operation
+    //cub::DeviceSegmentedRadixSort::SortPairs(d_temp_storage, temp_storage_bytes, d_csc_row_ind_M_in, d_csc_row_ind_M, d_csc_val_M_in, d_csc_val_M, offset, n_cols, d_Joffsets, d_Joffsets + 1);
+    //
+    //
+    //cudaMemcpy(csc_row_ind_M, d_csc_row_ind_M, offset * sizeof(int), cudaMemcpyDeviceToHost);
+    //cudaMemcpy(csc_val_M, d_csc_val_M, offset * sizeof(double), cudaMemcpyDeviceToHost);
+
+
+    // sparse matrix matrix product - identity and norm calculation
+    double norm = 0;
+    for (int j = 0; j < n_cols; j++)
+    {
+	    for (int i = 0; i < n_cols; i++)
+	    {
+            const int A_row_ptr = csr_row_ptr_A[i];
+            const int A_row_size = csr_row_ptr_A[i + 1] - A_row_ptr;
+
+            const int M_col_ptr = csc_col_ptr_M[j];
+            const int M_col_size = csc_col_ptr_M[j + 1] - M_col_ptr;
+            int Mi = 0;
+            double acc = 0;
+
+            for (int Aj = 0; Aj < A_row_size; Aj++)
+            {
+                while (Mi < M_col_size && csc_row_ind_M[M_col_ptr + Mi] < csr_col_ind_A[A_row_ptr + Aj])
+                {
+                    Mi++;
+                }
+                if (csc_row_ind_M[M_col_ptr + Mi] == csr_col_ind_A[A_row_ptr + Aj])
+                {
+                    acc += csc_val_M[M_col_ptr + Mi] * csr_val_A[A_row_ptr + Aj];
+                }
+            }
+
+            //while (Aj < A_row_size && Mi < M_col_size)
+		    //{
+			//    while (Aj < A_row_size && csr_col_ind_A[A_row_ptr + Aj] < csc_row_ind_M[M_col_ptr + Mi])
+			//    {
+			//    	Aj++;
+            //        while (Mi < M_col_size && csc_row_ind_M[M_col_ptr + Mi] < csr_col_ind_A[A_row_ptr + Aj])
+            //        {
+            //            Mi++;
+            //        }
+			//    }
+            //	if (csc_row_ind_M[M_col_ptr + Mi] == csr_col_ind_A[A_row_ptr + Aj])
+            //	{
+            //		acc += csc_val_M[M_col_ptr + Mi] * csr_val_A[A_row_ptr + Aj];
+            //	}
+            //	Aj++;
+            //    Mi++;
+		    //}
+
+            if (i == j)
+                acc -= 1;
+
+            norm += acc * acc;
+	    }
+    }
+
+    norm = sqrt(norm);
+
+    printf("SPAI finished. Error is: %f", norm);
+
+    free_cuda_dyn_arr(d_vs); 
+    free_cuda_dyn_arr(d_Qvs); 
+    free_cuda_dyn_arr(d_AIJs); 
+    free_cuda_dyn_arr(d_AIJtildes); 
+    free_cuda_dyn_arr(d_Ahat); 
+    free_cuda_dyn_arr(d_Anews); 
+    free_cuda_dyn_arr(d_B2s);
 
     //free(A_hats_inds); free(A_hats);
     free(n1s); free(Js);
