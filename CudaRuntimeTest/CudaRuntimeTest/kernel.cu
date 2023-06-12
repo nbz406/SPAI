@@ -464,6 +464,18 @@ __global__ void set_ptr_array_with_irregular_column_offsets(double** Array, doub
     }
 }
 
+__global__ void set_ptr_array_with_irregular_column_offsets_and_n1s(double** Array, double* A, int size, int* col_offsets, int* n1s, int col_offset, int row_offset, int n_rows, int n)
+{
+    const unsigned int idx = threadIdx.x + blockIdx.x * blockDim.x;
+    if (idx < n)
+    {
+        if (n1s[idx] == 0)
+            Array[idx] = A + idx * size + col_offset * n_rows + row_offset;
+        else
+			Array[idx] = A + idx * size + (col_offsets[idx] + col_offset) * n_rows + row_offset;
+    }
+}
+
 __global__ void set_ptr_array_with_irregular_column_and_row_offsets(double** Array, double* A, int size, int* col_offsets, int* row_offsets, int n_rows, int n)
 {
     const unsigned int idx = threadIdx.x + blockIdx.x * blockDim.x;
@@ -478,11 +490,6 @@ __global__ void mult_taus(double* arr, double* taus, int ltau, int k, int maxn1,
     const unsigned int tid = threadIdx.x + blockIdx.x * blockDim.x;
     const unsigned int kk = tid / maxn1;
     const unsigned int i = tid % maxn1;
-
-    if (kk == 885)
-    {
-        int x = 1;
-    }
 
     if (tid < n)
     {
@@ -534,12 +541,15 @@ __host__ dyn_arr<T>* init_dyn_arr(int capacity)
 template <typename T>
 __host__ void resize_based_on_write_size(dyn_arr<T>* arr, const unsigned int n_elems)
 {
-    while (arr->capacity < n_elems)
-        arr->capacity *= 2;
+    if (arr->capacity < n_elems)
+	{
+		while (arr->capacity < n_elems)
+			arr->capacity *= 2;
 
-    T* temp = (T*)malloc(sizeof(T) * arr->capacity);
-    free(arr->array);
-    arr->array = temp;
+		T* temp = (T*)malloc(sizeof(T) * arr->capacity);
+		free(arr->array);
+		arr->array = temp;
+	}
 }
 
 template <typename T>
@@ -568,12 +578,15 @@ __host__ cuda_dyn_arr<T>* init_cuda_dyn_arr(int capacity)
 template <typename T>
 __host__ void cuda_resize_based_on_write_size(cuda_dyn_arr<T>* arr, const unsigned int n_elems)
 {
-    while (arr->capacity < n_elems)
-        arr->capacity *= 2;
+    if (arr->capacity < n_elems)
+	{
+		while (arr->capacity < n_elems)
+			arr->capacity *= 2;
 
-	T* temp; cudacall(cudaMalloc((void**)&temp, sizeof(T) * arr->capacity));
-    cudacall(cudaFree(arr->array));
-    arr->array = temp;
+		T* temp; cudacall(cudaMalloc((void**)&temp, sizeof(T) * arr->capacity));
+		cudacall(cudaFree(arr->array));
+		arr->array = temp;
+	}
 }
 
 template <typename T>
@@ -608,6 +621,8 @@ __host__ void construct_Ahats(
         {
             const int col_ind = Js[J_size * k + j];
             const int col_start = csc_col_ptr_A[col_ind];
+            if (col_start < 0)
+                break;
             const int col_size = csc_col_ptr_A[col_ind + 1] - col_start;
             for (int i = 0; i < maxn1; i++)
             {
@@ -668,6 +683,42 @@ int main()
     //create_identity_plus_minus_csc(n_rows, 3, csc_col_ptr_M, csc_val_M, csc_row_ind_M);
 	create_identity_csc(n_rows, csc_col_ptr_M, csc_val_M, csc_row_ind_M);
 
+    // sparse matrix matrix product - identity and norm calculation 
+    double norm = 0;
+    for (int j = 0; j < n_cols; j++)
+    {
+        for (int i = 0; i < n_cols; i++)
+        {
+            const int A_row_ptr = csr_row_ptr_A[i];
+            const int A_row_size = csr_row_ptr_A[i + 1] - A_row_ptr;
+
+            const int M_col_ptr = csc_col_ptr_M[j];
+            const int M_col_size = csc_col_ptr_M[j + 1] - M_col_ptr;
+            int Mi = 0;
+            double acc = 0;
+
+            for (int Aj = 0; Aj < A_row_size; Aj++)
+            {
+                while (Mi < M_col_size && csc_row_ind_M[M_col_ptr + Mi] < csr_col_ind_A[A_row_ptr + Aj])
+                {
+                    Mi++;
+                }
+                if (csc_row_ind_M[M_col_ptr + Mi] == csr_col_ind_A[A_row_ptr + Aj])
+                {
+                    acc += csc_val_M[M_col_ptr + Mi] * csr_val_A[A_row_ptr + Aj];
+                }
+            }
+
+            if (i == j)
+                acc -= 1;
+
+            norm += acc * acc;
+        }
+    }
+    norm = sqrt(norm);
+    printf("Before SPAI with preconditioner M = I. Error is: %f\n", norm);
+
+
     // for Cublas padding
     int maxn1 = 0;
     int maxn2 = 0;
@@ -695,15 +746,18 @@ int main()
     // A-column norms used later
     for (int k = 0; k < n_cols; k++) // map (^2) reduce (+)
     {
-        double acc = 0;
+        A_col_norms[k] = 0;
         const int c_ptr = csc_col_ptr_A[k];
-        const int c_size = csc_col_ptr_A[k + 1] - c_ptr;
-	    for (int i = 0; i < c_size; i++)
-	    {
-            const double v = csc_val_A[c_ptr + i];
-            acc += v*v;
-	    }
-        A_col_norms[k] = sqrt(acc);
+        if (c_ptr >= 0)
+        {
+	        const int c_size = csc_col_ptr_A[k + 1] - c_ptr;
+        	for (int i = 0; i < c_size; i++)
+        	{
+        		const double v = csc_val_A[c_ptr + i];
+                A_col_norms[k] += v*v;
+        	}
+        }
+        A_col_norms[k] = sqrt(A_col_norms[k]);
     }
 
     for (int k = 0; k < n_cols; k++)
@@ -757,24 +811,26 @@ int main()
         for (int j = 0; j < n2s[k]; j++)
         {
             const int c_ind = Js[J_size * k + j];
-            size += csc_col_ptr_A[c_ind + 1] - csc_col_ptr_A[c_ind];
+            const int c_ptr = csc_col_ptr_A[c_ind];
+            if (c_ptr >= 0)
+				size += csc_col_ptr_A[c_ind + 1] - c_ptr;
         }
         if (size > I_size)
 			I_size = size;
     }
 
-    int L_size = I_size + 1;
     dyn_arr<int>* Is = init_dyn_arr<int>(I_size * n_cols);
-    dyn_arr<int>* Is_new = init_dyn_arr<int>(1);
-    cuda_dyn_arr<int>* d_Is_new = init_cuda_dyn_arr<int>(1);
-    dyn_arr<int>* Isorteds = init_dyn_arr<int>(I_size * n_cols);
-    cuda_dyn_arr<int>* d_Isorteds = init_cuda_dyn_arr<int>(1);
+    dyn_arr<int>* Is_new = init_dyn_arr<int>(I_size * n_cols);
+    cuda_dyn_arr<int>* d_Is_new = init_cuda_dyn_arr<int>(I_size * n_cols);
+    dyn_arr<int>* Isorteds = init_dyn_arr<int>(I_size * n_cols * max_iter);
+    cuda_dyn_arr<int>* d_Isorteds = init_cuda_dyn_arr<int>(I_size * n_cols);
 
 	int* id_of_ks = static_cast<int*>(malloc(sizeof(int) * n_cols));
     int* d_id_of_ks; cudaMalloc((void**)&d_id_of_ks, sizeof(int)* n_cols);
 
     for (int k = 0; k < n_cols; k++)
     {
+
         id_of_ks[k] = -1; // if I doesn't contain k, then stuff needs to be done
         // min heap to store row index, pointer next row index and number of elements left in column 
         MinHeap<int, cuda::std::pair<int,int>>* mh = init_minheap<int, cuda::std::pair<int, int>>(n2s[k]);
@@ -783,9 +839,11 @@ int main()
         {
             const int c_ind = Js[J_size * k + j];
             const int c_ptr = csc_col_ptr_A[c_ind];
+            if (c_ptr < 0)
+                break;
             const int col_size = csc_col_ptr_A[c_ind + 1] - c_ptr;
-
-        	insert_minheap<int, cuda::std::pair<int, int>>(mh, csc_row_ind_A[c_ptr], cuda::std::pair<int,int>(c_ptr + 1, col_size - 1));
+            if (col_size > 0)
+        		insert_minheap<int, cuda::std::pair<int, int>>(mh, csc_row_ind_A[c_ptr], cuda::std::pair<int,int>(c_ptr + 1, col_size - 1));
         }
         int prev_ind = -1;
         int n1 = 0;
@@ -981,26 +1039,34 @@ int main()
     // segmented map reduce to calculate norm
     for (int k = 0; k < n_cols; k++)
     {
-        double norm = 0;
-        for (int i = 0; i < maxn1; i++)
+        if (id_of_ks[k] >= 0)
+	    {
+		    double norm = 0;
+	    	for (int i = 0; i < maxn1; i++)
+	    	{
+	    		if (i < n1s[k])
+	    		{
+	    			const double val = rs->array[maxn1 * k + i];
+	    			norm += val * val;
+	    		}
+	    	}
+	    	r_norms[k] = sqrt(norm);
+	    }
+        else
         {
-	        if (i < n1s[k])
-	        {
-                const double val = rs->array[maxn1 * k + i];
-                norm += val * val;
-	        }
+            r_norms[k] = 1;
         }
-        r_norms[k] = sqrt(norm);
     }
 
-    for (int k = 0; k < n_cols; k++)
-        printf("col %d norm: %f\n", k, r_norms[k]);
+    //for (int k = 0; k < n_cols; k++)
+    //    printf("col %d norm: %f\n", k, r_norms[k]);
 
     // while loop begins omg
     bool above_epsilon = false;
     for (int k = 0; k < n_cols && !above_epsilon; k++)
     {
-        above_epsilon |= r_norms[k] > epsilon;
+        if (r_norms[k] > epsilon)
+            above_epsilon = true;
     }
 
     // initialize arrays to be reused during iterations
@@ -1042,8 +1108,11 @@ int main()
 	            {
                     const int row_ind = Isorteds->array[I_start + l];
                     const int r_ptr = csr_row_ptr_A[row_ind];
+                    if (r_ptr < 0)
+                        break;
                     const int row_size = csr_row_ptr_A[row_ind + 1] - r_ptr;
-                    insert_minheap<int, cuda::std::pair<int, int>>(mh, csr_col_ind_A[r_ptr], cuda::std::pair<int, int>(r_ptr + 1, row_size - 1));
+                    if (row_size > 0)
+						insert_minheap<int, cuda::std::pair<int, int>>(mh, csr_col_ind_A[r_ptr], cuda::std::pair<int, int>(r_ptr + 1, row_size - 1));
 	            }
             }
 
@@ -1051,8 +1120,11 @@ int main()
             {
                 const int row_ind = k;
                 const int r_ptr = csr_row_ptr_A[row_ind];
+                if (r_ptr < 0)
+                    break;
                 const int row_size = csr_row_ptr_A[row_ind + 1] - r_ptr;
-                insert_minheap<int, cuda::std::pair<int, int>>(mh, csr_col_ind_A[r_ptr], cuda::std::pair<int, int>(r_ptr + 1, row_size - 1));
+                if (row_size > 0)
+					insert_minheap<int, cuda::std::pair<int, int>>(mh, csr_col_ind_A[r_ptr], cuda::std::pair<int, int>(r_ptr + 1, row_size - 1));
             }
 
             int count = 0;
@@ -1073,6 +1145,10 @@ int main()
                 {
                     // calc Rho from j and residual.
                     const int c_ptr = csc_col_ptr_A[j];
+                    if (c_ptr < 0)
+                    {
+                        break;
+                    }
                     const int c_size = csc_col_ptr_A[j + 1] - c_ptr;
 
                     double rTAej = 0;
@@ -1119,7 +1195,7 @@ int main()
 
                 prev_col = j;
                 if (elems_left > 0)
-                    insert_minheap<int, cuda::std::pair<int, int>>(mh, csc_row_ind_A[ptr], cuda::std::pair<int, int>(ptr + 1, elems_left -   1));
+                    insert_minheap<int, cuda::std::pair<int, int>>(mh, csr_col_ind_A[ptr], cuda::std::pair<int, int>(ptr + 1, elems_left -   1));
             }
             avg /= count;
             while (rho_j_pairs->size > 0) // reuse mh
@@ -1128,7 +1204,6 @@ int main()
                 delete_minimum<double, int>(rho_j_pairs);
                 if (-pair.first < avg)
 					insert_minheap<int, cuda::std::pair<int, int>>(mh, pair.second, {});
-                //insert_minheap<int, cuda::std::pair<int, int>>(mh, pair.second, {});
             }
             int n2tilde = 0;
             while (mh->size > 0)
@@ -1155,7 +1230,9 @@ int main()
                 if (j < n2tildes[k])
                 {
                     const int c_ind = Js[J_size * k + n2s[k] + j];
-                    size += csc_col_ptr_A[c_ind + 1] - csc_col_ptr_A[c_ind];
+                    const int c_ptr = csc_col_ptr_A[c_ind];
+                    if (c_ptr >= 0)
+						size += csc_col_ptr_A[c_ind + 1] - csc_col_ptr_A[c_ind];
                 }
             }
             size += n1s[k];
@@ -1187,6 +1264,8 @@ int main()
                 {
                     const int c_ind = Js[J_size * k + n2s[k] + j];
                     const int c_ptr = csc_col_ptr_A[c_ind];
+                    if (c_ptr < 0)
+                        break;
                     const int col_size = csc_col_ptr_A[c_ind + 1] - c_ptr;
 
                     insert_minheap<int, cuda::std::pair<int, int>>(mh, csc_row_ind_A[c_ptr], cuda::std::pair<int, int>(c_ptr + 1, col_size   - 1));
@@ -1211,9 +1290,9 @@ int main()
                 if (i != prev_row && i != Isorteds->array[I_start + I_ptr])
                 {
                     Is_new->array[Inew_start + n1tilde] = i;
-                    n1tilde++;
-                    if (id_of_ks[k] != -1 && i == k)
+                    if (i == k)
                         id_of_ks[k] = n1s[k] + n1tilde;
+                    n1tilde++;
                 }
                 prev_row = i;
                 // checking if the next element belongs to same array as the current array.
@@ -1230,35 +1309,49 @@ int main()
         // Construct AIJtilde = A[I, Jtilde]
         const int AIJtilde_size = maxn1 * maxn2tilde;
         resize_based_on_write_size(AIJtildes, AIJtilde_size * n_cols);
+        std::fill(&AIJtildes->array[0], &AIJtildes->array[AIJtilde_size * n_cols], 0);
         for (int k = 0; k < n_cols; k++)
         {
-            int AIJtildes_ind = AIJtilde_size * k;
-            for (int j = 0; j < maxn2tilde; j++)
-            {
-                const int col_ind = Js[J_size * k + n2s[k] + j]; // Jtilde starts after J in Js
-                const int col_start = csc_col_ptr_A[col_ind];
-                const int col_size = csc_col_ptr_A[col_ind + 1] - col_start;
-                for (int i = 0; i < maxn1; i++)
-                {
-                    if (j > n2tildes[k] - 1)
-                        AIJtildes->array[AIJtildes_ind + IDX2C(i, j, maxn1)] = 0;
-                    else
-                    {
-                        int col_elem_idx = 0;
-                        const int i_ind = Is_new->array[new_I_size * k + i];
-                        while (col_elem_idx < col_size && csc_row_ind_A[col_start + col_elem_idx] < i_ind) // linear search can be binary
-                            col_elem_idx++;
-                        if (i_ind == csc_row_ind_A[col_start + col_elem_idx])
-                        {
-                            AIJtildes->array[AIJtildes_ind + IDX2C(i, j, maxn1)] = csc_val_A[col_start + col_elem_idx];
-                        }
-                        else
-                        {
-                            AIJtildes->array[AIJtildes_ind + IDX2C(i, j, maxn1)] = 0;
-                        }
-                    }
-                }
-            }
+            if (n1s[k] > 0)
+	        {
+		        int AIJtildes_ind = AIJtilde_size * k;
+	        	for (int j = 0; j < maxn2tilde; j++)
+	        	{
+	        		const int col_ind = Js[J_size * k + n2s[k] + j]; // Jtilde starts after J in Js
+	        		const int c_ptr = csc_col_ptr_A[col_ind];
+	        		if (c_ptr >= 0)
+	        		{
+	        			const int col_size = csc_col_ptr_A[col_ind + 1] - c_ptr;
+	        			for (int i = 0; i < maxn1; i++)
+	        			{
+	        				if (j > n2tildes[k] - 1)
+	        					AIJtildes->array[AIJtildes_ind + IDX2C(i, j, maxn1)] = 0;
+	        				else
+	        				{
+	        					int col_elem_idx = 0;
+	        					const int i_ind = Is_new->array[new_I_size * k + i];
+	        					while (col_elem_idx < col_size && csc_row_ind_A[c_ptr + col_elem_idx] < i_ind) // linear search can be binary
+	        						col_elem_idx++;
+	        					if (i_ind == csc_row_ind_A[c_ptr + col_elem_idx])
+	        					{
+	        						AIJtildes->array[AIJtildes_ind + IDX2C(i, j, maxn1)] = csc_val_A[c_ptr + col_elem_idx];
+	        					}
+	        					else
+	        					{
+	        						AIJtildes->array[AIJtildes_ind + IDX2C(i, j, maxn1)] = 0;
+	        					}
+	        				}
+	        			}
+	        		}
+	        		else
+	        		{
+	        			for (int i = 0; i < maxn1; i++)
+	        			{
+	        				AIJtildes->array[AIJtildes_ind + IDX2C(i, j, maxn1)] = 0;
+	        			}
+	        		}
+	        	}
+	        }
         }
 
         int maxnewn1 = 0;
@@ -1280,10 +1373,6 @@ int main()
 
     	const int Anew_size = maxnewn1 * maxnewn2;
         resize_based_on_write_size(Anews, Anew_size * n_cols);
-        // Au starts at n2s[k] * maxnewn1
-        // B2 starts at n2s[k] * maxnewn1 + (n1s[k]-n2s[k])
-        // AItildeJtildes starts at n2s[k] * maxnewn1 + n1s[k]
-        // ld is maxnew1 for all
 
     	// Au = Q.T * AIJtilde
         cuda_resize_based_on_write_size(d_Qs, n_cols* Q_size);
@@ -1293,10 +1382,11 @@ int main()
         cudacall(cudaMemcpy(d_Qs->array, Qs->array, n_cols * Q_size * sizeof(double), cudaMemcpyHostToDevice));
         cudacall(cudaMemcpy(d_AIJtildes->array, AIJtildes->array, n_cols * AIJtilde_size * sizeof(double), cudaMemcpyHostToDevice));
         cudacall(cudaMemcpy(d_n2s, n2s, n_cols * sizeof(int), cudaMemcpyHostToDevice));
+        cudacall(cudaMemcpy(d_n1s, n1s, n_cols * sizeof(int), cudaMemcpyHostToDevice));
 
-        cudaOccupancyMaxPotentialBlockSize(&minGridSize, &blockSize, set_ptr_array_with_irregular_column_offsets, 0, 0);
+        cudaOccupancyMaxPotentialBlockSize(&minGridSize, &blockSize, set_ptr_array_with_irregular_column_offsets_and_n1s, 0, 0);
         gridSize = (n_cols + blockSize - 1) / blockSize;
-        set_ptr_array_with_irregular_column_offsets << <gridSize, blockSize >> > (d_AnewsArray, d_Anews->array, Anew_size, d_n2s, 0, 0, maxnewn1, n_cols);
+        set_ptr_array_with_irregular_column_offsets_and_n1s << <gridSize, blockSize >> > (d_AnewsArray, d_Anews->array, Anew_size, d_n2s, d_n1s, 0, 0, maxnewn1, n_cols);
         set_ptr_array << <gridSize, blockSize >> > (d_QsArray, d_Qs->array, Q_size, 0, 0, maxn1, n_cols);
         set_ptr_array << <gridSize, blockSize >> > (d_AIJtildesArray, d_AIJtildes->array, AIJtilde_size, 0, 0, maxn1, n_cols);
 
@@ -1307,7 +1397,12 @@ int main()
 
         for (int k = 0; k < n_cols; k++)
         {
+            if (k == 5614)
+                printf("");
+
             int AItildeJtildes_ind = Anew_size * k + n2s[k] * maxnewn1 + n1s[k];
+            if (n1s[k] == 0)
+                AItildeJtildes_ind = Anew_size * k;
             for (int j = 0; j < maxn2tilde; j++)
             {
                 const int col_ind = Js[J_size * k + n2s[k] + j]; // Jtilde starts after J in Js
@@ -1348,7 +1443,12 @@ int main()
 	        for (int j = 0; j < maxn2tilde; j++)
 	        {
                 if (j < n2tildes[k])
-                    memcpy(&B2s->array[B2_size * k + maxB2n * j], &Anews->array[Anew_size * k + maxnewn1 * (j + n2s[k]) + n2s[k]], (n1s[k] + n1tildes[k] - n2s[k]) * sizeof(double));
+                {
+                    if (n1s[k] > 0)
+						memcpy(&B2s->array[B2_size * k + maxB2n * j], &Anews->array[Anew_size * k + maxnewn1 * (j + n2s[k]) + n2s[k]], (n1s[k] + n1tildes[k] - n2s[k]) * sizeof(double));
+                    else
+                        memcpy(&B2s->array[B2_size * k + maxB2n * j], &Anews->array[Anew_size * k + maxnewn1 * j], n1tildes[k] * sizeof(double));
+                }
 	        }
         }
 
@@ -1375,27 +1475,53 @@ int main()
             for (int j = 0; j < maxn2tilde; j++)
             {
                 if (j < n2tildes[k])
-                    memcpy(&Anews->array[Anew_size * k + maxnewn1 * (j + n2s[k]) + n2s[k]], &B2s->array[B2_size * k + maxB2n * j], (n1s[k] + n1tildes[k] - n2s[k]) * sizeof(double));
+	            {
+		            if (n1s[k] > 0)
+		            	memcpy(&Anews->array[Anew_size * k + maxnewn1 * (j + n2s[k]) + n2s[k]], &B2s->array[B2_size * k + maxB2n * j], (n1s[k] + n1tildes[k] - n2s[k]) * sizeof(double));
+                    else
+                        memcpy(&Anews->array[Anew_size * k + maxnewn1 * j], &B2s->array[B2_size * k + maxB2n * j], n1tildes[k] * sizeof(double));
+	            }
             }
         }
 
-        // copy prev A int new A // !!!!!!!!!!!!!!! If you can't use previous householder, then only copy R-part (maxn2) and not
-        // the householder part (maxn1)
+        // copy prev A into new A // 
         for (int k = 0; k < n_cols; k++)
         {
-            for (int j = 0; j < maxn2; j++)
-            {
-	            if (j < n2s[k])
-	            {
-                    memcpy(&Anews->array[Anew_size * k + maxnewn1 * j], &Ahats->array[A_size * k + maxn1 * j], sizeof(double) * maxn1);
-	            }
-            }
+            if (n1s[k] > 0)
+	        {
+		        for (int j = 0; j < maxn2; j++)
+		        {
+		        	if (j < n2s[k])
+		        	{
+		        		memcpy(&Anews->array[Anew_size * k + maxnewn1 * j], &Ahats->array[A_size * k + maxn1 * j], sizeof(double) * maxn1);
+		        	}
+		        }
+	        }
             for (int ij = 0; ij < std::min(maxnewn2, maxnewn1); ij++)
             {
-                if (ij > std::min(n2s[k] + n2tildes[k] - 1, n1s[k] + n1tildes[k] - 1))
-                    Anews->array[Anew_size * k + maxnewn1 * ij + ij] = 1;
+                if (n1s[k] > 0)
+                {
+                    if (ij > std::min(n2s[k] + n2tildes[k] - 1, n1s[k] + n1tildes[k] - 1))
+                        Anews->array[Anew_size * k + maxnewn1 * ij + ij] = 1;
+                }
+                else
+                {
+                    if (ij > std::min(n2tildes[k] - 1, n1tildes[k] - 1))
+                        Anews->array[Anew_size * k + maxnewn1 * ij + ij] = 1;
+                }
             }
         }
+
+        //printf("Anews:\n");
+        //for (int i = 0; i < maxnewn1; i++)
+        //{
+        //    printf("[");
+        //    for (int j = 0; j < maxnewn2; j++)
+        //    {
+        //        printf("%1.5f ", Anews->array[Anew_size * 5614 + maxnewn1 * j + i]);
+        //    }
+        //    printf("]\n");
+        //}
 
         const int Qnew_size = maxnewn1 * maxnewn1;
         resize_based_on_write_size(Qnews, n_cols* Qnew_size);
@@ -1409,9 +1535,10 @@ int main()
             // Copy in previous Q and zeros
             for (int j = 0; j < maxn1; j++)
             {
-            	memcpy(&Qnews->array[Qnew_size * k + maxnewn1 * j], &Qs->array[Q_size * k + maxn1 * j], sizeof(double) * maxn1);
+            	memcpy(&Qnews->array[Qnew_size * k + maxnewn1 * j], &Qs->array[Q_size * k + maxn1 * j], sizeof(double) * n1s[k]);
             }
         }
+
         cuda_resize_based_on_write_size(d_Qnews, Qnew_size* n_cols);
         cudaMemcpy(d_Qnews->array, Qnews->array, Qnew_size* n_cols * sizeof(double), cudaMemcpyHostToDevice);
 
@@ -1473,7 +1600,18 @@ int main()
                     mhats->array[k * maxnewn2 + j] = 0;
             }
         }
-        
+
+        //printf("Anews:\n");
+        //for (int i = 0; i < maxnewn1; i++)
+        //{
+        //    printf("[");
+        //    for (int j = 0; j < maxnewn2; j++)
+        //    {
+        //        printf("%1.5f ", Anews->array[Anew_size * 5614 + maxnewn1 * j + i]);
+        //    }
+        //    printf("]\n");
+        //}
+
         cudacall(cudaMemcpy(d_mhats->array, mhats->array, n_cols * maxnewn2 * sizeof(double), cudaMemcpyHostToDevice));
         cudacall(cudaMemcpy(d_Anews->array, Anews->array, n_cols * Anew_size * sizeof(double), cudaMemcpyHostToDevice));
 
@@ -1542,6 +1680,7 @@ int main()
 
         construct_Ahats(n_cols, AIJs->array, A_size, Js, n2s, J_size, Is->array, n1s, I_size, maxn1, maxn2, csc_col_ptr_A, csc_row_ind_A, csc_val_A);
         cudaMemcpy(d_AIJs->array, AIJs->array, sizeof(double) * A_size * n_cols, cudaMemcpyHostToDevice);
+        cudaMemcpy(d_id_of_ks, id_of_ks, sizeof(int) * n_cols, cudaMemcpyHostToDevice);
 
         
         cudaOccupancyMaxPotentialBlockSize(&minGridSize, &blockSize, set_ptr_array, 0, 0);
@@ -1567,21 +1706,27 @@ int main()
             {
                 if (i < n1s[k])
                 {
-                    const double val = rs->array[maxn1 * k + i];
+                    double val = rs->array[maxn1 * k + i];
                     norm += val * val;
                 }
             }
+            if (sqrt(norm) > r_norms[k])
+                printf(""); 
             r_norms[k] = sqrt(norm);
         }
 
-        //for (int k = 0; k < n_cols; k++)
-        //    printf("col %d norm: %f\n", k, r_norms[k]);
+        for (int k = 0; k < n_cols; k++)
+            printf("col %d norm: %f\n", k, r_norms[k]);
 
         above_epsilon = false;
         for (int k = 0; k < n_cols && !above_epsilon; k++)
         {
-            above_epsilon |= r_norms[k] > epsilon;
+            if (r_norms[k] > epsilon)
+            {
+                above_epsilon = true;
+            }
         }
+
     }
 
     // scatter to m_k by associating mhats with J, sorting key-value pairs and eliminating non-valid entries (n_cols)
@@ -1614,7 +1759,8 @@ int main()
         }
     }
 
-    // Sorting pairs can be done in parallel, but the code below doesn't work:
+    // Sorting pairs can be done in parallel, but the code below doesn't work.
+    // It sorts the Js correctly, but some of the values in d_csc_val_M are uninitialized
 
     //double* d_csc_val_M_in; cudaMalloc((void**)&d_csc_val_M_in, sizeof(double)* offset);
     //double* d_csc_val_M; cudaMalloc((void**)&d_csc_val_M, offset * sizeof(double));
@@ -1641,8 +1787,8 @@ int main()
     //cudaMemcpy(csc_val_M, d_csc_val_M, offset * sizeof(double), cudaMemcpyDeviceToHost);
 
 
-    // sparse matrix matrix product - identity and norm calculation
-    double norm = 0;
+    // sparse matrix matrix product - identity and norm calculation 
+    norm = 0;
     for (int j = 0; j < n_cols; j++)
     {
 	    for (int i = 0; i < n_cols; i++)
@@ -1667,24 +1813,6 @@ int main()
                 }
             }
 
-            //while (Aj < A_row_size && Mi < M_col_size)
-		    //{
-			//    while (Aj < A_row_size && csr_col_ind_A[A_row_ptr + Aj] < csc_row_ind_M[M_col_ptr + Mi])
-			//    {
-			//    	Aj++;
-            //        while (Mi < M_col_size && csc_row_ind_M[M_col_ptr + Mi] < csr_col_ind_A[A_row_ptr + Aj])
-            //        {
-            //            Mi++;
-            //        }
-			//    }
-            //	if (csc_row_ind_M[M_col_ptr + Mi] == csr_col_ind_A[A_row_ptr + Aj])
-            //	{
-            //		acc += csc_val_M[M_col_ptr + Mi] * csr_val_A[A_row_ptr + Aj];
-            //	}
-            //	Aj++;
-            //    Mi++;
-		    //}
-
             if (i == j)
                 acc -= 1;
 
@@ -1694,7 +1822,8 @@ int main()
 
     norm = sqrt(norm);
 
-    printf("SPAI finished. Error is: %f", norm);
+    printf("SPAI finished. Error is: %f\n", norm);
+    printf("nnz of M is %d. nnz of A is %d. ratio of nnz of M to nnz of A is %f\n", offset, nnz, (double)offset / double(nnz));
 
     free_cuda_dyn_arr(d_vs); 
     free_cuda_dyn_arr(d_Qvs); 
